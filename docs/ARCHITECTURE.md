@@ -53,4 +53,14 @@ Mac 视频视图实现 NSTextInputClient，让 macOS 输入法在本地组合候
 
 ## 后续工程方向
 
-按需扩展动态显示分辨率、旋转追踪、音频、通知、拖放和虚拟设备能力。虚拟摄像头/麦克风应独立协商，不能将 Android 16 的虚拟设备能力错误地视为 Android 12 基础融合的必需条件。正式产品发布还需要真机 OEM 矩阵、Apple Silicon 运行验证、发布证书、故障恢复与网络性能测试。
+按需扩展旋转追踪、音频、通知、拖放和虚拟设备能力。虚拟摄像头/麦克风应独立协商，不能将 Android 16 的虚拟设备能力错误地视为 Android 12 基础融合的必需条件。正式产品发布还需要真机 OEM 矩阵、Apple Silicon 运行验证、发布证书、故障恢复与网络性能测试。
+
+## 0.3 窗口、重配置与电源
+
+融合采用带原生标题栏的 AppKit 窗口，内容区自由改变比例；手机镜像继续使用等比手机外壳。窗口位置/尺寸按应用保存，置顶通过 floating 层级逐窗口持久化，不设置跨所有 Spaces。融合默认内容 420×720 pt，约 1pt=1dp；Mac 的 Retina backing scale 不参与 Android 布局尺寸计算。
+
+窗口尺寸最多每 200ms 提交一次，每流最多一个请求在途并合并为最新目标。编码代次与 VirtualDisplay 生命周期分离，停止旧编码器不会销毁应用任务。新 Surface 绑定同一显示，VirtualDisplay.resize 触发应用正常的 Configuration 更新/Activity 重建；Macroid 不强制 tablet 标志。编码能力降级时同比缩小 density，保留 dp。失败尝试重建上一组有效尺寸。
+
+Transport 将配置事件和视频按 socket 顺序投递到同一 main queue。VideoRenderer 在重配置时保留旧显示层，等待新层首帧可显示后淡入 180ms；减少动态效果时立即替换。macOS 14.4+ 使用 isReadyForDisplay，旧系统使用 rendering 状态。新画面就绪前禁用输入，并通过 generation 拒绝迟到的旧坐标。
+
+关屏使用由设备级 ScreenPower 管理；与 ownFocus/alwaysUnlocked 分开协商。ShellPlatform 封装物理显示 token 与 SurfaceControl 电源接口，Android 14+ 必要时经 system-server 类加载器加载 DisplayControl 与 android_servers JNI 库。独立 app_process 守护持有临时唤醒锁并控制面板；父进程的 stdin 管道关闭时恢复面板和释放锁，包括父进程 SIGKILL。守护自身被强杀且主 agent 仍存活时，主进程监测并恢复；系统整体重启或所有相关进程同时被强杀不属于此清理保证。

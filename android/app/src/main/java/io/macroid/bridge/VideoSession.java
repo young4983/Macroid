@@ -5,61 +5,93 @@ import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
 import android.media.MediaCodecList;
 import android.os.SystemClock;
-import java.io.IOException;
-import java.util.*;
 import android.os.Handler;
 import android.util.DisplayMetrics;
-import android.view.Display;
 import android.view.Surface;
 import org.json.JSONObject;
 import java.io.Closeable;
+import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/** The control thread owns the display; each encoder generation owns only its codec resources. */
 final class VideoSession implements Closeable {
-    final int id, width, height, density, displayId;
+    final int id, displayId;
+    volatile int width, height, density;
     final boolean fusion;
-    private final String encoderName;
-    private final int fps;
     private final Wire wire;
-    private final MediaCodec encoder;
-    private final Surface surface;
+    interface EncoderFactory { Configured create(int width, int height, JSONObject options) throws IOException; }
+    private final EncoderFactory encoderFactory;
     private final ShellPlatform.DisplayHandle display;
-    private final AtomicBoolean running = new AtomicBoolean(true);
-    private Thread worker;
+    private final JSONObject options;
+    private final boolean configEvents;
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private Run run;
+    private int generation = 1;
+
+    static final class Configured {
+        final MediaCodec codec;
+        final Surface surface;
+        final String name;
+        final int width, height, fps;
+        private final AtomicBoolean released = new AtomicBoolean();
+        Configured(MediaCodec codec, Surface surface, String name, int width, int height, int fps) {
+            this.codec = codec; this.surface = surface; this.name = name;
+            this.width = width; this.height = height; this.fps = fps;
+        }
+        void release() {
+            if (!released.compareAndSet(false, true)) return;
+            try { codec.stop(); } catch (Exception ignored) { }
+            try { codec.release(); } finally { surface.release(); }
+        }
+    }
+    private static final class Run {
+        final Configured config;
+        final AtomicBoolean running = new AtomicBoolean(true);
+        volatile boolean hasPicture;
+        Thread worker;
+        Run(Configured config) { this.config = config; }
+    }
 
     VideoSession(int id, JSONObject request, ShellPlatform platform, Wire wire, Handler handler) throws Exception {
-        this.id = id; this.wire = wire;
+        this(id, request, platform, wire, handler, VideoSession::configure);
+    }
+    // Package-local injection supports real-device failure/recovery tests without a wire backdoor.
+    VideoSession(int id, JSONObject request, ShellPlatform platform, Wire wire, Handler handler, EncoderFactory encoderFactory) throws Exception {
+        this.encoderFactory = encoderFactory;
+        this.id = id; this.wire = wire; options = new JSONObject(request.toString());
         fusion = !"mirror".equals(request.optString("mode", "fusion"));
-        int w = bounded(request.optInt("width", 720), 320, 2560), h = bounded(request.optInt("height", 1280), 320, 2560);
-        int dpi = bounded(request.optInt("density", 240), 120, 640);
+        configEvents = request.optBoolean("configEvents", false);
+        int w = bounded(request.optInt("width", 720), 320, 8192), h = bounded(request.optInt("height", 1280), 320, 8192);
+        int dpi = bounded(request.optInt("density", 240), 40, 640);
         if (!fusion) {
             DisplayMetrics metrics = new DisplayMetrics(); platform.displays.getDisplay(0).getRealMetrics(metrics);
             float scale = Math.min(1f, 1920f / Math.max(metrics.widthPixels, metrics.heightPixels));
             w = Math.max(2, ((int)(metrics.widthPixels * scale)) & ~1);
             h = Math.max(2, ((int)(metrics.heightPixels * scale)) & ~1); dpi = metrics.densityDpi;
         }
-        density = dpi;
-        Configured configured = configure(w, h, request);
-        encoder = configured.codec; surface = configured.surface;
-        width = configured.width; height = configured.height;
-        encoderName = configured.name; fps = configured.fps;
-        ShellPlatform.DisplayHandle createdDisplay = null;
+        Configured config = encoderFactory.create(w, h, options);
+        adopt(config, w, h, dpi);
+        ShellPlatform.DisplayHandle created = null;
         try {
-            createdDisplay = platform.createDisplay("Macroid " + id, width, height, density, surface, fusion, handler);
-            displayId = createdDisplay.id;
+            created = platform.createDisplay("Macroid " + id, width, height, density, config.surface, fusion, handler);
+            displayId = created.id;
             if (fusion) platform.launch(request.getString("package"), displayId);
         } catch (Exception | LinkageError e) {
-            if (createdDisplay != null) createdDisplay.release();
-            try { encoder.stop(); } catch (Exception ignored) { }
-            encoder.release(); surface.release(); throw e;
+            if (created != null) created.release(); config.release(); throw e;
         }
-        display = createdDisplay;
+        display = created;
     }
 
-    private record Configured(MediaCodec codec, Surface surface, String name, int width, int height, int fps) {}
+    private void adopt(Configured config, int requestedWidth, int requestedHeight, int dpi) {
+        run = new Run(config); width = config.width; height = config.height;
+        // Preserve dp dimensions when the encoder falls back to a smaller pixel buffer.
+        double scale = Math.min(width / (double)requestedWidth, height / (double)requestedHeight);
+        density = fusion ? Math.max(1, (int)Math.round(dpi * scale)) : dpi;
+    }
 
-    private static Configured configure(int requestedWidth, int requestedHeight, JSONObject request) throws IOException {
+    static Configured configure(int requestedWidth, int requestedHeight, JSONObject request) throws IOException {
         List<MediaCodecInfo> codecs = new ArrayList<>();
         for (MediaCodecInfo info : new MediaCodecList(MediaCodecList.REGULAR_CODECS).getCodecInfos()) {
             if (!info.isEncoder() || info.isAlias()) continue;
@@ -118,18 +150,69 @@ final class VideoSession implements Closeable {
     private static int align(int value, int alignment) { return value / alignment * alignment; }
 
     JSONObject info() throws Exception {
+        Configured config = run.config;
         return new JSONObject().put("stream", id).put("display", displayId).put("width", width)
-                .put("height", height).put("density", density).put("encoder", encoderName).put("fps", fps).put("codec", "h264").put("mode", fusion ? "fusion" : "mirror");
+                .put("height", height).put("density", density).put("generation", generation)
+                .put("encoder", config.name).put("fps", config.fps).put("codec", "h264")
+                .put("mode", fusion ? "fusion" : "mirror");
     }
-    void start() {
-        worker = new Thread(this::encode, "Macroid-video-" + id); worker.start();
+    int generation() { return generation; }
+    boolean isOpen() { return !closed.get(); }
+    boolean isActive() { return !closed.get() && run.running.get() && run.hasPicture; }
+
+    void start() throws Exception {
+        if (closed.get()) throw new IOException("Window is closed");
+        if (configEvents) wire.json(info().put("event", "stream.config"));
+        Run current = run;
+        current.worker = new Thread(() -> encode(current), "Macroid-video-" + id + "-" + generation);
+        current.worker.start();
     }
-    private void encode() {
+
+    JSONObject resize(JSONObject request) throws Exception {
+        if (!fusion || !configEvents) throw new IOException("This stream does not support resizing");
+        if (closed.get()) throw new IOException("Window is closed");
+        int w = request.getInt("width"), h = request.getInt("height"), dpi = request.getInt("density");
+        if (w < 320 || h < 320 || w > 8192 || h > 8192 || dpi < 40 || dpi > 640) throw new IOException("Invalid display dimensions");
+        int oldW = width, oldH = height, oldDpi = density;
+        stopEncoder(); // Joining guarantees that no old packets can follow stream.config.
+        generation++;
+        try {
+            replace(w, h, dpi);
+        } catch (Exception failure) {
+            try { replace(oldW, oldH, oldDpi); }
+            catch (Exception recovery) {
+                close();
+                wire.json(new JSONObject().put("event", "stream.error").put("stream", id).put("message", "调整尺寸失败，恢复画面失败：" + recovery));
+                throw new IOException("调整尺寸失败，请重新连接画面", failure);
+            }
+            start();
+            return info().put("restored", true).put("warning", "无法使用请求尺寸，已恢复上一尺寸：" + failure.getMessage());
+        }
+        start();
+        return info();
+    }
+    private void replace(int w, int h, int dpi) throws Exception {
+        Configured config = encoderFactory.create(w, h, options);
+        try {
+            adopt(config, w, h, dpi);
+            display.virtual.resize(width, height, density);
+            display.virtual.setSurface(config.surface);
+        } catch (Exception e) { config.release(); run.running.set(false); throw e; }
+    }
+    private void stopEncoder() throws IOException {
+        Run current = run;
+        current.running.set(false);
+        if (current.worker == null) { current.config.release(); return; }
+        try { current.worker.join(3000); }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException(e); }
+        if (current.worker.isAlive()) throw new IOException("视频发送阻塞，请重新连接设备");
+    }
+    private void encode(Run current) {
+        MediaCodec encoder = current.config.codec;
         MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
         long started = SystemClock.elapsedRealtime();
-        boolean hasPicture = false;
         try {
-            while (running.get()) {
+            while (current.running.get()) {
                 int index = encoder.dequeueOutputBuffer(info, 10000);
                 if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                     MediaFormat output = encoder.getOutputFormat();
@@ -139,7 +222,7 @@ final class VideoSession implements Closeable {
                     }
                 }
                 if (index < 0) {
-                    if (!hasPicture && SystemClock.elapsedRealtime() - started > 12000) throw new IOException("编码器已启动，但未产生画面。请解锁手机并重试投屏。");
+                    if (!current.hasPicture && SystemClock.elapsedRealtime() - started > 12000) throw new IOException("编码器未产生画面，请解锁手机并重试");
                     continue;
                 }
                 try {
@@ -149,28 +232,30 @@ final class VideoSession implements Closeable {
                     int flags = ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0 ? 1 : 0)
                             | ((info.flags & MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0 ? 2 : 0);
                     send(source, info.presentationTimeUs, flags);
-                    if ((flags & 1) == 0) hasPicture = true;
+                    if ((flags & 1) == 0) current.hasPicture = true;
                 } finally { encoder.releaseOutputBuffer(index, false); }
             }
         } catch (Exception e) {
-            if (running.get()) try { wire.json(new JSONObject().put("event", "stream.error").put("stream", id).put("message", e.toString())); } catch (Exception ignored) { }
-        } finally {
-            running.set(false); display.release();
-            try { encoder.stop(); } catch (Exception ignored) { }
-            encoder.release(); surface.release();
-        }
+            if (current.running.getAndSet(false)) {
+                if (closed.compareAndSet(false, true)) display.release();
+                try { wire.json(new JSONObject().put("event", "stream.error").put("stream", id).put("message", e.toString())); } catch (Exception ignored) { }
+            }
+        } finally { current.running.set(false); current.config.release(); }
     }
     private void send(ByteBuffer source, long pts, int flags) throws IOException {
         byte[] packet = new byte[8 + source.remaining()];
         ByteBuffer target = ByteBuffer.wrap(packet); target.putLong(pts); target.put(source);
         wire.send(Wire.VIDEO, flags, id, packet);
     }
-    void syncFrame() { android.os.Bundle bundle = new android.os.Bundle(); bundle.putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0); encoder.setParameters(bundle); }
+    void syncFrame() {
+        if (!run.running.get()) return;
+        android.os.Bundle bundle = new android.os.Bundle(); bundle.putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0);
+        run.config.codec.setParameters(bundle);
+    }
     @Override public void close() {
-        running.set(false);
-        if (worker != null && worker != Thread.currentThread()) try { worker.join(3000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-        // The encoder thread owns codec/display cleanup, including failure paths.
-        if (worker == null) { display.release(); try { encoder.stop(); } catch (Exception ignored) { } encoder.release(); surface.release(); }
+        if (!closed.compareAndSet(false, true)) return;
+        try { stopEncoder(); } catch (IOException e) { System.err.println(e); }
+        finally { display.release(); }
     }
     private static int bounded(int value, int min, int max) { return Math.max(min, Math.min(value, max)); }
 }

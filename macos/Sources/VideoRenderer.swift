@@ -3,7 +3,13 @@ import AVFoundation
 import CoreMedia
 
 @MainActor final class VideoRenderer: ObservableObject {
-    let layer = AVSampleBufferDisplayLayer()
+    let container = CALayer()
+    private(set) var layer = AVSampleBufferDisplayLayer()
+    private var previous: AVSampleBufferDisplayLayer?
+    private var displayTask: Task<Void, Never>?
+    private var revision = 0
+    private(set) var currentFrameReady = false
+    var onFirstFrame: (() -> Void)?
     @Published var hasFrame = false
     private(set) var frameCount = 0
     @Published var error: String?
@@ -11,7 +17,58 @@ import CoreMedia
     private var format: CMVideoFormatDescription?
     private var waitingForKey = true
 
-    init() { layer.videoGravity = .resizeAspect; layer.backgroundColor = NSColor.black.cgColor }
+    init() { configureLayer(layer); container.addSublayer(layer) }
+    private func configureLayer(_ layer: AVSampleBufferDisplayLayer) {
+        layer.videoGravity = .resizeAspect; layer.backgroundColor = NSColor.black.cgColor
+    }
+    func layout(in bounds: CGRect) {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        container.frame = bounds; layer.frame = container.bounds; previous?.frame = container.bounds
+        CATransaction.commit()
+    }
+    func beginConfiguration() {
+        revision += 1; displayTask?.cancel(); displayTask = nil
+        if currentFrameReady {
+            previous?.removeFromSuperlayer(); previous?.flushAndRemoveImage()
+            previous = layer; previous?.removeAllAnimations(); previous?.opacity = 1
+        } else { layer.removeFromSuperlayer(); layer.flushAndRemoveImage() }
+        layer = AVSampleBufferDisplayLayer(); configureLayer(layer)
+        layer.frame = container.bounds; layer.opacity = previous == nil ? 1 : 0
+        container.addSublayer(layer)
+        format = nil; sps = nil; pps = nil; waitingForKey = true; currentFrameReady = false; error = nil
+    }
+    private func awaitVisibleFrame() {
+        guard !currentFrameReady, displayTask == nil else { return }
+        let expected = revision
+        displayTask = Task { [weak self] in
+            for _ in 0..<750 {
+                guard !Task.isCancelled, let self, self.revision == expected else { return }
+                if self.layer.status == .failed {
+                    self.error = self.layer.error?.localizedDescription ?? "视频解码失败"; self.displayTask = nil; return
+                }
+                let visible: Bool
+                if #available(macOS 14.4, *) { visible = self.layer.isReadyForDisplay }
+                else { visible = self.layer.status == .rendering }
+                if visible {
+                    self.currentFrameReady = true; self.hasFrame = true
+                    self.layer.opacity = 1
+                    let duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.18
+                    if self.previous != nil && duration > 0 {
+                        let fade = CABasicAnimation(keyPath: "opacity"); fade.fromValue = 0; fade.toValue = 1; fade.duration = duration
+                        self.layer.add(fade, forKey: "resizeFade")
+                    }
+                    self.onFirstFrame?()
+                    if duration > 0 { try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000)) }
+                    guard !Task.isCancelled, self.revision == expected else { return }
+                    self.previous?.removeFromSuperlayer(); self.previous?.flushAndRemoveImage(); self.previous = nil
+                    self.displayTask = nil; return
+                }
+                try? await Task.sleep(nanoseconds: 20_000_000)
+            }
+            guard let self, !Task.isCancelled, self.revision == expected else { return }
+            self.error = "等待新尺寸画面超时，请重新连接画面"; self.displayTask = nil
+        }
+    }
     func consume(_ packet: WirePacket) {
         guard packet.payload.count > 8 else { return }
         let units = NALUnit.split(Data(packet.payload.dropFirst(8)))
@@ -56,7 +113,13 @@ import CoreMedia
         }
         if layer.status == .failed { layer.flush(); waitingForKey = true; error = layer.error?.localizedDescription; return }
         layer.enqueue(sample); frameCount += 1
-        if !hasFrame { hasFrame = true }
+        awaitVisibleFrame()
     }
-    func reset() { layer.flushAndRemoveImage(); hasFrame = false; frameCount = 0; error = nil; format = nil; sps = nil; pps = nil; waitingForKey = true }
+    func reset() {
+        revision += 1; displayTask?.cancel(); displayTask = nil
+        previous?.removeFromSuperlayer(); previous?.flushAndRemoveImage(); previous = nil
+        layer.flushAndRemoveImage(); layer.removeAllAnimations(); layer.opacity = 1
+        hasFrame = false; currentFrameReady = false; frameCount = 0; error = nil
+        format = nil; sps = nil; pps = nil; waitingForKey = true
+    }
 }

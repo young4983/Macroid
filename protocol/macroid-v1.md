@@ -32,7 +32,7 @@ ADB 配对与授权承担设备身份和传输安全。Wire 层只提供会话�
 
 接收方必须处理头和负载任意拆包、多个帧合包；在分配完整负载前校验长度与版本。
 
-JSON 为 UTF-8 对象。视频负载前 8 字节为 `presentationTimeUs`（大端 int64），后续为 MediaCodec H.264 Annex B 数据。config 帧包含 SPS/PPS。该版本使用 AVC baseline，以降低解码和帧重排复杂度。
+JSON 为 UTF-8 对象。视频负载前 8 字节为 `presentationTimeUs`（大端 int64），后续为 MediaCodec H.264 Annex B 数据。config 帧包含 SPS/PPS。编码器自行选择支持的 AVC profile；不强制 Baseline，B 帧上限为 0。
 
 ## 请求与响应
 
@@ -66,12 +66,14 @@ JSON 为 UTF-8 对象。视频负载前 8 字节为 `presentationTimeUs`（大�
 | `apps.launch` | `package` | 在 display 0 启动应用，用于关闭融合模式后的主屏操作 |
 | `apps.list` | 无 | `apps: [{package,name}]`，仅可启动应用 |
 | `apps.icon` | `package` | `png`，Base64 编码 PNG |
-| `stream.open` | `stream,mode,package?,width?,height?,density?,fps?,bitrate?` | `stream,display,width,height,density,codec,mode,encoder,fps` |
+| `stream.open` | `stream,mode,package?,width?,height?,density?,fps?,bitrate?,configEvents?` | `stream,display,width,height,density,codec,mode,encoder,fps,generation` |
+| `stream.resize` | `stream,width,height,density` | 同 stream.open；恢复旧尺寸时包含 `restored,warning` |
+| `device.screenPower` | `screenOff`（boolean） | `screenOff`；设备级、非持久状态 |
 | `stream.close` | `stream` | 空对象；幂等 |
 | `stream.sync` | `stream` | 请求关键帧 |
-| `input.pointer` | `stream,action,x,y,scrollX?,scrollY?` | 空对象 |
-| `input.key` | `stream,code,meta?` | Android KeyEvent code / meta |
-| `input.text` | `stream,text` | 空对象；Unicode 需要启用 IME |
+| `input.pointer` | `stream,generation?,action,x,y,scrollX?,scrollY?` | 空对象 |
+| `input.key` | `stream,generation?,code,meta?` | Android KeyEvent code / meta |
+| `input.text` | `stream,generation?,text` | 空对象；Unicode 需要启用 IME |
 | `ime.enable` / `ime.disable` | 无 | `enabled` |
 | `clipboard.set` | `text` | 空对象 |
 | `clipboard.get` | 无 | `text` |
@@ -84,10 +86,26 @@ JSON 为 UTF-8 对象。视频负载前 8 字节为 `presentationTimeUs`（大�
 
 `stream` 由客户端选择，范围 1–65535，最多四个并发会话。`mode=fusion` 创建 own-content 副屏并启动 `package`；`mode=mirror` 捕获 display 0，忽略应用参数。成功元数据先于首个视频帧发送。
 
-视频默认 720×1280 / 240dpi / 60fps / 6Mbps。请求尺寸限制 320–2560。主屏使用真实比例并将最长边限制在 1920。实际宽高按编码器对齐与尺寸能力收缩；硬件失败后尝试 30fps、最长边 1280，再尝试软件编码器（最长边 960/720、24fps）。不强制 AVC profile，B 帧上限为 0。`stream.open` 返回实际 `width`、`height`、`encoder` 和配置 `fps`，应使用这些元数据设置画面和输入坐标。编码器仍可能因并发资源或厂商限制失败。
+视频默认 720×1280 / 240dpi / 60fps / 6Mbps。融合请求尺寸限制 320–8192、请求 density 为 40–640；编码能力仍会降低最终像素尺寸。主屏使用真实比例并将最长边限制在 1920。实际宽高按编码器对齐与尺寸能力收缩；硬件失败后尝试 30fps、最长边 1280，再尝试软件编码器（最长边 960/720、24fps）。不强制 AVC profile，B 帧上限为 0。`stream.open` 返回实际 `width`、`height`、`encoder` 和配置 `fps`，应使用这些元数据设置画面和输入坐标。编码器仍可能因并发资源或厂商限制失败。
 
 坐标以编码画面像素计，不含 Mac 的黑边。主屏输入会换算到真实显示尺寸。pointer action 为 Android `0=DOWN,1=UP,2=MOVE,3=CANCEL,8=SCROLL`。文字限 65536 个 Java UTF-16 code units；客户端应显式启用 IME，不应自动更改用户键盘。
 
 文件数据 Base64 编码，每块原始数据最多 196608 字节。服务只访问规范化后的主用户共享存储，拒绝向上穿越和访问应用私有路径。上传在目标目录写临时文件，按连续 offset 验证，在确认完整大小并同步后提交；拒绝覆盖已有文件。断开删除本次未完成的临时上传文件。该版本不支持断点续传。
 
 能力字段应作为 UI 与未来扩展的协商依据，不应只凭 SDK 推断所有设备可用。v1 明确报告 `audio=false`、`virtualCamera=false`。不支持的协议版本应拒绝，而不是尝试解释为官方产品协议。
+
+## 0.3 可选能力：动态尺寸与关屏
+
+`hello.capabilities` 增加 `resize`、`streamConfig`、`screenPower`、`screenPowerReason` 和 `alwaysUnlocked`；`ownFocus` 独立保留。缺失字段按 false 处理。`agentPid` 是用于进程生命周期诊断的 Android agent PID。帧头和视频负载不变，旧客户端不请求新能力时继续使用固定尺寸。
+
+动态尺寸流必须在打开时指定 `configEvents=true`。每次开始编码（包括首次打开、成功 resize 或失败后恢复）都先发送以下事件，再发送该代 SPS/PPS 和首个关键帧：
+
+```json
+{"event":"stream.config","stream":1,"display":7,"generation":2,"width":1440,"height":960,"density":240,"codec":"h264","encoder":"...","fps":60,"mode":"fusion"}
+```
+
+服务端停止并等待上一代编码线程退出后才发出此事件；`generation` 在同一次打开期间递增。事件与视频须在客户端同一有序通道消费，先更新几何和解码状态；响应 continuation 的调度顺序不能当作视频分界。resize 响应可能晚于新配置事件或新视频。发送输入时可携带 generation，过期输入会被拒绝。调整前取消触控，首个新画面就绪后恢复输入。
+
+融合显示保留 display ID，只调整 VirtualDisplay 并更换编码 Surface。降分辨率时同比调整 density，保持请求的 dp 尺寸（取整允许小幅偏差）；不要按编码像素直接判断手机/平板。调整失败会尝试恢复旧尺寸并发送新配置；恢复成功的响应带 `restored=true` 与 `warning`，恢复失败发送 `stream.error`。非法尺寸在停止编码前拒绝。镜像和未请求配置事件的流不支持 resize。
+
+`device.screenPower` 的 `screenOff=true` 关闭物理面板，不关闭虚拟显示或代替用户解锁。须有已产生画面的有效流，手机须处于交互且已解锁状态。API 探测成功并不保证所有 OEM 接受实际操作；失败返回错误，不更改成功状态。状态变化广播 `{"event":"device.screenPower","screenOff":true}`，所有窗口应同步展示。最后一个流关闭/失败、连接断开、正常退出会恢复面板；独立守护通过父进程管道 EOF 处理 agent 异常退出。唤醒锁仅存在于关屏会话中，不修改系统永久息屏设置。物理关屏、独立焦点、锁屏隔离不能相互推断。

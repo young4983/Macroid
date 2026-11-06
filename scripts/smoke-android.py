@@ -76,7 +76,7 @@ class Client:
 
 def state():
     output = run('shell', 'content', 'query', '--uri', 'content://io.macroid.fixture/state')
-    result = dict(re.findall(r'(display|text|clicks|editorX|editorY|buttonX|buttonY)=(.*?)(?=, (?:display|text|clicks|editorX|editorY|buttonX|buttonY)=|$)', output))
+    result = dict(re.findall(r'(\w+)=(.*?)(?=, \w+=|$)', output.partition(': ')[2]))
     return {k: (v if k == 'text' else int(v)) for k, v in result.items()}
 
 report = {'serial': args.serial, 'checks': [], 'videoFrames': {}}

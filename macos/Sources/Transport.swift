@@ -9,11 +9,11 @@ final class Transport: @unchecked Sendable {
     private var nextID: Int = 1
     private var pending: [Int: CheckedContinuation<[String: Any], Error>] = [:]
     private var closed = false
-    private let onVideo: ((WirePacket) -> Void)?
-    private let onEvent: (([String: Any]) -> Void)?
-    private let onDisconnect: ((Error) -> Void)?
+    private let onVideo: (@MainActor (WirePacket) -> Void)?
+    private let onEvent: (@MainActor ([String: Any]) -> Void)?
+    private let onDisconnect: (@MainActor (Error) -> Void)?
 
-    init(onVideo: ((WirePacket) -> Void)? = nil, onEvent: (([String: Any]) -> Void)? = nil, onDisconnect: ((Error) -> Void)? = nil) {
+    init(onVideo: (@MainActor (WirePacket) -> Void)? = nil, onEvent: (@MainActor ([String: Any]) -> Void)? = nil, onDisconnect: (@MainActor (Error) -> Void)? = nil) {
         self.onVideo = onVideo; self.onEvent = onEvent; self.onDisconnect = onDisconnect
     }
 
@@ -75,13 +75,18 @@ final class Transport: @unchecked Sendable {
             if let data, !data.isEmpty {
                 do {
                     for packet in try self.parser.append(data) {
-                        if packet.kind == 2 { self.onVideo?(packet); continue }
+                        if packet.kind == 2 {
+                            // A single FIFO main-queue path orders configuration events and video packets.
+                            DispatchQueue.main.async { self.onVideo?(packet) }; continue
+                        }
                         guard let object = try JSONSerialization.jsonObject(with: packet.payload) as? [String: Any] else { throw WireError.malformed }
                         let id = object["id"] as? Int ?? 0
                         if id != 0, let continuation = self.pending.removeValue(forKey: id) {
-                            if object["ok"] as? Bool == true { continuation.resume(returning: object["result"] as? [String: Any] ?? [:]) }
-                            else { continuation.resume(throwing: WireError.remote(object["error"] as? String ?? "手机操作失败")) }
-                        } else { self.onEvent?(object) }
+                            DispatchQueue.main.async {
+                                if object["ok"] as? Bool == true { continuation.resume(returning: object["result"] as? [String: Any] ?? [:]) }
+                                else { continuation.resume(throwing: WireError.remote(object["error"] as? String ?? "手机操作失败")) }
+                            }
+                        } else { DispatchQueue.main.async { self.onEvent?(object) } }
                     }
                 } catch { self.fail(error); return }
             }
@@ -95,7 +100,7 @@ final class Transport: @unchecked Sendable {
         closed = true; connection?.cancel()
         let continuations = pending.values; pending.removeAll()
         for continuation in continuations { continuation.resume(throwing: error) }
-        if notify { onDisconnect?(error) }
+        if notify { DispatchQueue.main.async { self.onDisconnect?(error) } }
     }
     func close() { queue.async { self.fail(WireError.disconnected, notify: false) } }
 }

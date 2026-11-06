@@ -6,7 +6,7 @@ Research references:
 
 - AndroMeld product documentation: https://andromeld.catchingnow.com/
 - AndroMeldDesktop3rd: https://github.com/chsbuffer/AndroMeldDesktop3rd
-- scrcpy: https://github.com/Genymobile/scrcpy (Apache-2.0), consulted for Android display compatibility concepts. Macroid does not embed the scrcpy server, client or protocol.
+- scrcpy: https://github.com/Genymobile/scrcpy (Apache-2.0), consulted for Android display compatibility concepts. The Android 14+ system-server class loader/JNI loading sequence in ShellPlatform.PhysicalPower is adapted from its DisplayControl wrapper (Genymobile and scrcpy contributors); the surrounding implementation is Macroid-specific. The Apache-2.0 license is included in LICENSES/scrcpy-Apache-2.0.txt and in the app resources. Macroid does not embed the scrcpy server, client or protocol.
 - Android Open Source Project framework APIs: https://android.googlesource.com/platform/frameworks/base/
 
 The distributable Mac application bundles the Android SDK Platform-Tools `adb` executable. Its upstream notices are preserved in `Macroid.app/Contents/Resources/adb-NOTICE.txt` and `macos/Resources/adb-NOTICE.txt`. ADB is a separate third-party executable; rebuilding uses the SDK installed by the developer.

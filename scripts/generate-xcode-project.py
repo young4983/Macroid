@@ -5,7 +5,7 @@ import hashlib
 
 root = Path(__file__).resolve().parents[1] / 'macos'
 sources = sorted(p.name for p in (root / 'Sources').glob('*.swift'))
-resources = ['Macroid.apk', 'adb', 'adb-NOTICE.txt', 'Macroid.icns']
+resources = ['Macroid.apk', 'adb', 'adb-NOTICE.txt', 'Macroid.icns', 'THIRD_PARTY_NOTICES.md', 'scrcpy-Apache-2.0.txt']
 def uid(value): return hashlib.sha256(value.encode()).hexdigest()[:24].upper()
 def obj(key, body): return f'{uid(key)} = {{ {body} }};'
 def refs(values): return '(' + ', '.join(uid(v) for v in values) + ',)'

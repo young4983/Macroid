@@ -31,12 +31,26 @@ public final class AgentMain {
     private final Handler handler;
     private final Map<Integer, VideoSession> sessions = new ConcurrentHashMap<>();
     private final File sharedRoot = new File("/sdcard").getCanonicalFile();
+    private final ScreenPower screenPower = new ScreenPower();
+    private volatile boolean shuttingDown;
+    private final Runnable powerMonitor = new Runnable() {
+        @Override public void run() {
+            if (shuttingDown) return;
+            try {
+                if (screenPower.isOff() && (screenPower.guardFailed() || sessions.values().stream().noneMatch(VideoSession::isOpen))) {
+                    screenPower.set(false);
+                    wire.json(screenPower.info().put("event", "device.screenPower"));
+                }
+            } catch (Exception e) { System.err.println("Power monitor: " + e); }
+            if (!shuttingDown) handler.postDelayed(this, 1000);
+        }
+    };
     private String previousIME;
     private boolean imePreviouslyEnabled;
     private final Map<String, Upload> uploads = new HashMap<>();
     private record Upload(File temporary, File destination, RandomAccessFile handle, long size) {}
 
-    private AgentMain(ShellPlatform platform, Wire wire, Handler handler) throws Exception { this.platform = platform; this.wire = wire; this.handler = handler; }
+    private AgentMain(ShellPlatform platform, Wire wire, Handler handler) throws Exception { this.platform = platform; this.wire = wire; this.handler = handler; handler.postDelayed(powerMonitor, 1000); }
 
     public static void main(String[] args) throws Exception {
         if (args.length != 2 || !args[0].matches("macroid_[a-zA-Z0-9_]+") || args[1].length() < 32) throw new IllegalArgumentException("Invalid launch arguments");
@@ -72,9 +86,11 @@ public final class AgentMain {
     }
 
     private JSONObject deviceInfo() throws Exception {
-        return new JSONObject().put("product", "Macroid").put("protocol", 1).put("version", "0.2.0")
-                .put("sdk", Build.VERSION.SDK_INT).put("model", Build.MODEL).put("manufacturer", Build.MANUFACTURER)
+        return new JSONObject().put("product", "Macroid").put("protocol", 1).put("version", "0.3.0")
+                .put("agentPid", android.os.Process.myPid()).put("sdk", Build.VERSION.SDK_INT).put("model", Build.MODEL).put("manufacturer", Build.MANUFACTURER)
                 .put("capabilities", new JSONObject().put("fusion", true).put("mirror", true).put("ownFocus", platform.ownFocusAllowed())
+                        .put("resize", true).put("streamConfig", true).put("alwaysUnlocked", platform.alwaysUnlockedAllowed())
+                        .put("screenPower", platform.screenPowerUnavailableReason().isEmpty()).put("screenPowerReason", platform.screenPowerUnavailableReason())
                         .put("unicodeIME", true).put("files", true).put("audio", false).put("virtualCamera", false).put("maxStreams", 4));
     }
     private void loop() throws Exception {
@@ -110,7 +126,25 @@ public final class AgentMain {
                 // Send metadata before the first codec frame; clients can set up the decoder first.
                 reply(request, session.info()); session.start(); return null;
             }
-            case "stream.close": { VideoSession session = sessions.remove(request.getInt("stream")); if (session != null) session.close(); return new JSONObject(); }
+            case "stream.resize": {
+                VideoSession session = session(request); platform.cancelGesture(session.displayId);
+                return session.resize(request);
+            }
+            case "stream.close": {
+                VideoSession session = sessions.remove(request.getInt("stream"));
+                if (session != null) { platform.cancelGesture(session.displayId); session.close(); }
+                if (sessions.values().stream().noneMatch(VideoSession::isOpen) && screenPower.isOff()) {
+                    screenPower.set(false); wire.json(screenPower.info().put("event", "device.screenPower"));
+                }
+                return new JSONObject();
+            }
+            case "device.screenPower": {
+                boolean off = request.getBoolean("screenOff");
+                if (off && sessions.values().stream().noneMatch(VideoSession::isActive)) throw new IOException("请先打开一个可用的投屏或应用窗口");
+                JSONObject state = screenPower.set(off);
+                wire.json(new JSONObject(state.toString()).put("event", "device.screenPower"));
+                return state;
+            }
             case "stream.sync": { session(request).syncFrame(); return new JSONObject(); }
             case "input.pointer": {
                 VideoSession session = session(request);
@@ -123,7 +157,7 @@ public final class AgentMain {
                 }
                 int action = request.getInt("action");
                 if (action != 0 && action != 1 && action != 2 && action != 3 && action != 8) throw new IOException("Invalid pointer action");
-                platform.pointer(session.displayId, action, x, y, (float)request.optDouble("scrollX"), (float)request.optDouble("scrollY"));
+                platform.pointer(session.displayId, action, x, y, (float)request.optDouble("scrollX", 0), (float)request.optDouble("scrollY", 0));
                 return new JSONObject();
             }
             case "input.key": { platform.key(session(request).displayId, request.getInt("code"), request.optInt("meta")); return new JSONObject(); }
@@ -159,7 +193,9 @@ public final class AgentMain {
     }
     private VideoSession session(JSONObject request) throws Exception {
         VideoSession session = sessions.get(request.getInt("stream"));
-        if (session == null) throw new IOException("Window is closed"); return session;
+        if (session == null) throw new IOException("Window is closed");
+        if (request.has("generation") && request.getInt("generation") != session.generation()) throw new IOException("视频尺寸已改变，请等待新画面");
+        return session;
     }
     private JSONObject apps() throws Exception {
         Intent intent = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
@@ -258,6 +294,7 @@ public final class AgentMain {
         Upload upload = uploads.remove(id); if (upload != null) { try { upload.handle.close(); } catch (IOException ignored) { } upload.temporary.delete(); }
     }
     private void shutdown() {
+        shuttingDown = true; handler.removeCallbacks(powerMonitor); screenPower.close();
         for (VideoSession session : sessions.values()) session.close(); sessions.clear(); restoreIME();
         for (String id : new ArrayList<>(uploads.keySet())) discardUpload(id);
     }

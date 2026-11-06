@@ -221,7 +221,7 @@ struct GuideView: View {
         Form {
             Section("应用窗口") {
                 Toggle("融合模式", isOn: Binding(get: { model.fusionEnabled }, set: { model.fusionEnabled = $0 }))
-                Text("开启后，应用在独立窗口中运行。Android 12/13 使用兼容模式，焦点和输入法可能与手机共享。关闭后，应用在手机主屏幕打开并投屏。")
+                Text("开启后，应用在原生窗口中运行。拖拽窗口会改变 Android 副屏尺寸，支持的应用会自行切换宽屏布局。Android 12/13 的焦点和输入法可能与手机共享。关闭后，应用在手机主屏幕打开并投屏。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("连接") {
@@ -233,10 +233,11 @@ struct GuideView: View {
             }
             Section("操作提示") {
                 Text("右键或 Esc 返回；⌘V 输入剪贴板文字。中文输入请在投屏窗口启用 Macroid 键盘，断开时恢复原输入法。")
+                Text("窗口的更多操作中可分别设置窗口置顶；关屏使用会关闭手机物理屏幕，影响当前设备的所有窗口，关闭最后一个窗口时恢复。请先在手机上解锁。")
                 Text("音频、通知和摄像头映射尚未实现。手机旋转后请重新打开投屏窗口。")
             }.font(.caption).foregroundStyle(.secondary)
             Section {
-                HStack { BrandMark(size: 28); VStack(alignment: .leading) { Text("Macroid").font(.headline); Text("0.2.0 · macOS 13+ · Android 12+").font(.caption).foregroundStyle(.secondary) } }
+                HStack { BrandMark(size: 28); VStack(alignment: .leading) { Text("Macroid").font(.headline); Text("0.3.0 · macOS 13+ · Android 12+").font(.caption).foregroundStyle(.secondary) } }
                 Text("助手无桌面图标，可在 Android 应用设置中卸载。最多同时打开四个窗口，受手机能力与应用限制。")
                     .font(.caption).foregroundStyle(.secondary)
             }

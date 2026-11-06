@@ -1,0 +1,11 @@
+Macroid Android display compatibility
+
+The Android 14+ system-server class loader and JNI loading sequence in
+ShellPlatform.PhysicalPower is adapted from scrcpy's DisplayControl wrapper
+by Genymobile and the scrcpy contributors, under the Apache License 2.0.
+Upstream: https://github.com/Genymobile/scrcpy
+Reference: server/src/main/java/com/genymobile/scrcpy/wrappers/DisplayControl.java
+
+Changes: integrated into Macroid's physical-panel capability discovery and
+power-control adapter. Macroid does not bundle the scrcpy client, server or
+wire protocol. The full Apache License 2.0 accompanies this notice.

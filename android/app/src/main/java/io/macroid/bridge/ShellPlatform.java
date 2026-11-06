@@ -27,7 +27,7 @@ final class ShellPlatform {
     final DisplayManager displays;
     private final Object input;
     private final Method inject, setDisplay;
-    private long gestureStart;
+    private final Map<Integer, Long> gestures = new HashMap<>();
 
     ShellPlatform() throws Exception {
         Class<?> thread = Class.forName("android.app.ActivityThread");
@@ -62,6 +62,61 @@ final class ShellPlatform {
         return Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission("android.permission.ADD_TRUSTED_DISPLAY") == android.content.pm.PackageManager.PERMISSION_GRANTED;
     }
     boolean ownFocusAllowed() { return Build.VERSION.SDK_INT >= 34 && trustedDisplayAllowed(); }
+
+    boolean alwaysUnlockedAllowed() {
+        return trustedDisplayAllowed() && context.checkSelfPermission("android.permission.ADD_ALWAYS_UNLOCKED_DISPLAY") == android.content.pm.PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** Interface discovery only; actual device/OEM permission failures are returned by the operation. */
+    static final class PhysicalPower {
+        private static Class<?> serverDisplayControl;
+        private static synchronized Class<?> displayControl() throws Exception {
+            if (serverDisplayControl == null) {
+                String classpath = System.getenv("SYSTEMSERVERCLASSPATH");
+                if (classpath == null || classpath.isEmpty()) classpath = "/system/framework/services.jar";
+                // DisplayControl moved out of the boot classpath on Android 14. Its JNI library
+                // must be associated with this system-server loader (ordinary PathClassLoader
+                // cannot access the private system library namespace).
+                Class<?> factory = Class.forName("com.android.internal.os.ClassLoaderFactory");
+                Method create = factory.getDeclaredMethod("createClassLoader", String.class, String.class, String.class,
+                        ClassLoader.class, int.class, boolean.class, String.class);
+                ClassLoader loader = (ClassLoader)create.invoke(null, classpath, null, null, ClassLoader.getSystemClassLoader(), 0, true, null);
+                Class<?> control = loader.loadClass("com.android.server.display.DisplayControl");
+                Method load = Runtime.class.getDeclaredMethod("loadLibrary0", Class.class, String.class);
+                load.setAccessible(true); load.invoke(Runtime.getRuntime(), control, "android_servers");
+                serverDisplayControl = control;
+            }
+            return serverDisplayControl;
+        }
+        private final Method setPower;
+        private final List<IBinder> tokens = new ArrayList<>();
+        PhysicalPower() throws Exception {
+            Class<?> surface = Class.forName("android.view.SurfaceControl");
+            setPower = surface.getMethod("setDisplayPowerMode", IBinder.class, int.class);
+            Class<?> lookup = surface;
+            try { surface.getMethod("getPhysicalDisplayIds"); }
+            catch (NoSuchMethodException e) { lookup = displayControl(); }
+            long[] ids = (long[]) lookup.getMethod("getPhysicalDisplayIds").invoke(null);
+            Method getToken = lookup.getMethod("getPhysicalDisplayToken", long.class);
+            for (long id : ids) {
+                IBinder token = (IBinder)getToken.invoke(null, id);
+                if (token != null) tokens.add(token);
+            }
+            if (tokens.isEmpty()) throw new IOException("找不到手机物理显示器");
+        }
+        void set(boolean on) throws Exception {
+            Exception failure = null;
+            for (IBinder token : tokens) {
+                try { setPower.invoke(null, token, on ? 2 : 0); }
+                catch (Exception e) { failure = e; }
+            }
+            if (failure != null) throw failure;
+        }
+    }
+    String screenPowerUnavailableReason() {
+        try { new PhysicalPower(); return ""; }
+        catch (Throwable e) { return "此设备没有可用的物理屏幕电源接口：" + e.getClass().getSimpleName(); }
+    }
 
     static final class DisplayHandle {
         final VirtualDisplay virtual;
@@ -106,7 +161,7 @@ final class ShellPlatform {
         // AOSP Android 12 does not grant ADD_TRUSTED_DISPLAY to shell; do not request it there.
         if (fusion && trustedDisplayAllowed()) {
             flags |= (1 << 10) | (1 << 11) | (1 << 13);
-            if (context.checkSelfPermission("android.permission.ADD_ALWAYS_UNLOCKED_DISPLAY") == android.content.pm.PackageManager.PERMISSION_GRANTED) flags |= (1 << 12);
+            if (alwaysUnlockedAllowed()) flags |= (1 << 12);
         }
         if (fusion && ownFocusAllowed()) flags |= (1 << 14);
         VirtualDisplay display;
@@ -120,6 +175,10 @@ final class ShellPlatform {
         if (fusion) {
             try {
                 Object wm = Class.forName("android.view.WindowManagerGlobal").getMethod("getWindowManagerService").invoke(null);
+                if (trustedDisplayAllowed()) {
+                    try { wm.getClass().getMethod("setShouldShowSystemDecors", int.class, boolean.class).invoke(wm, display.getDisplay().getDisplayId(), false); }
+                    catch (ReflectiveOperationException e) { System.err.println("Display decorations policy unavailable: " + e); }
+                }
                 wm.getClass().getMethod("setDisplayImePolicy", int.class, int.class).invoke(wm, display.getDisplay().getDisplayId(), 0);
             } catch (ReflectiveOperationException e) { System.err.println("Local IME policy unavailable: " + e); }
         }
@@ -136,7 +195,8 @@ final class ShellPlatform {
 
     void pointer(int display, int action, float x, float y, float scrollX, float scrollY) throws Exception {
         long now = android.os.SystemClock.uptimeMillis();
-        if (action == MotionEvent.ACTION_DOWN) gestureStart = now;
+        if (action == MotionEvent.ACTION_DOWN) gestures.put(display, now);
+        long gestureStart = gestures.getOrDefault(display, now);
         MotionEvent.PointerProperties prop = new MotionEvent.PointerProperties(); prop.id = 0; prop.toolType = MotionEvent.TOOL_TYPE_FINGER;
         MotionEvent.PointerCoords coords = new MotionEvent.PointerCoords(); coords.x = x; coords.y = y;
         coords.pressure = action == MotionEvent.ACTION_UP ? 0 : 1;
@@ -145,6 +205,10 @@ final class ShellPlatform {
         MotionEvent event = MotionEvent.obtain(gestureStart, now, action, 1, new MotionEvent.PointerProperties[]{prop},
                 new MotionEvent.PointerCoords[]{coords}, 0, 0, 1, 1, 0, 0, source, 0);
         try { setDisplay.invoke(event, display); inject.invoke(input, event, 0); } finally { event.recycle(); }
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) gestures.remove(display);
+    }
+    void cancelGesture(int display) throws Exception {
+        if (gestures.containsKey(display)) pointer(display, MotionEvent.ACTION_CANCEL, 0, 0, 0, 0);
     }
     void key(int display, int code, int meta) throws Exception {
         long now = android.os.SystemClock.uptimeMillis();

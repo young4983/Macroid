@@ -9,7 +9,7 @@ import AVFoundation
         guard let index = args.firstIndex(of: "--integration-test"), args.indices.contains(index + 1),
               let outputIndex = args.firstIndex(of: "--integration-output"), args.indices.contains(outputIndex + 1) else { return }
         let serial = args[index + 1], output = URL(fileURLWithPath: args[outputIndex + 1], isDirectory: true)
-        guard serial.hasPrefix("emulator-") else { fputs("Integration test requires an emulator\n", stderr); NSApp.terminate(nil); return }
+        guard serial.hasPrefix("emulator-") || args.contains("--allow-device") else { fputs("Integration test requires an emulator\n", stderr); NSApp.terminate(nil); return }
         Task {
             var report: [String: Any] = ["serial": serial, "architecture": ProcessInfo.processInfo.machineArchitecture]
             do {
@@ -29,6 +29,15 @@ import AVFoundation
                     try await Task.sleep(nanoseconds: 100_000_000)
                 }
                 guard decoded else { throw WireError.remote("Two Mac video display layers did not enter rendering state") }
+                if args.contains("--window-features") { try await verifyWindows(model, output: output, report: &report) }
+                if args.contains("--screen-power-test") {
+                    await model.setScreenOff(true)
+                    guard model.screenOff else { throw WireError.remote(model.error ?? "Screen power toggle failed") }
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                    await model.setScreenOff(false)
+                    guard !model.screenOff else { throw WireError.remote("Screen power restore failed") }
+                    report["screenPowerUI"] = true
+                }
                 for _ in 0..<100 { if model.icons.count == model.apps.count { break }; try await Task.sleep(nanoseconds: 100_000_000) }
                 report["sdk"] = model.sdk; report["apps"] = model.apps.count
                 report["renderingStreams"] = model.sessions.count
@@ -60,13 +69,82 @@ import AVFoundation
             NSApp.terminate(nil)
         }
     }
+    private static func verifyWindows(_ model: AppModel, output: URL, report: inout [String: Any]) async throws {
+        guard let session = model.sessions.values.first(where: { $0.package == "io.macroid.fixture" }),
+              let window = NSApp.windows.first(where: { $0.title == session.name + " · Macroid" }), session.dynamicResize else {
+            throw WireError.remote("Missing native fusion window")
+        }
+        guard window.styleMask.contains(.titled), window.standardWindowButton(.closeButton) != nil else {
+            throw WireError.remote("Fusion window does not use native chrome")
+        }
+        let originalSize = window.contentView!.bounds.size, originalPin = session.pinned
+        let other = model.sessions.values.first(where: { $0.id != session.id })!
+        let otherPin = other.pinned
+        model.setPinned(session, true)
+        guard window.level == .floating, other.pinned == otherPin else { throw WireError.remote("Independent pinning failed") }
+        model.setPinned(session, false)
+        guard window.level == .normal else { throw WireError.remote("Unpin failed") }
+        model.setPinned(session, originalPin)
+        report["nativeChrome"] = true; report["independentPinning"] = true
+        var geometries: [[String: Any]] = []
+        for (label, size) in [("narrow", NSSize(width: 420, height: 760)), ("wide", NSSize(width: 960, height: 680)), ("narrow-again", NSSize(width: 420, height: 760))] {
+            window.setContentSize(size)
+            try await waitForGeometry(session, width: size.width, height: size.height - MirrorWindowController.fusionToolbarHeight)
+            geometries.append(["width": session.width, "height": session.height, "density": session.density, "display": session.displayID, "generation": session.generation])
+            window.makeKeyAndOrderFront(nil)
+            let observer = ADBClient()
+            for _ in 0..<100 {
+                let state = try await observer.run(["-s", model.selectedSerial, "shell", "content", "query", "--uri", "content://io.macroid.fixture/state"])
+                let pattern = "widthDp=(\\d+)"
+                let expression = try NSRegularExpression(pattern: pattern)
+                if let match = expression.firstMatch(in: state, range: NSRange(state.startIndex..., in: state)),
+                   let range = Range(match.range(at: 1), in: state), let dp = Double(state[range]), abs(dp-size.width) < 4 { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            // Configuration metadata can precede Activity recreation and its first actual layout.
+            try await Task.sleep(nanoseconds: 2_000_000_000)
+            let capture = Process(); capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            capture.arguments = ["-x", "-l", String(window.windowNumber), output.appendingPathComponent("fusion-" + label + ".png").path]
+            try capture.run(); capture.waitUntilExit()
+            report["windowCaptureAvailable"] = capture.terminationStatus == 0
+        }
+        report["resizeConfigurations"] = geometries
+        for n in 0..<16 {
+            window.setContentSize(NSSize(width: 460 + n * 20, height: 650))
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        try await waitForGeometry(session, width: 760, height: 610)
+        report["rapidResize"] = true
+        let package = session.package!, name = session.name
+        let pinnedBefore = UserDefaults.standard.object(forKey: "windowPinned-" + package)
+        model.setPinned(session, true)
+        window.close()
+        model.open(AndroidApp(package: package, name: name))
+        guard let reopened = model.sessions.values.first(where: { $0.package == package }), reopened.pinned else { throw WireError.remote("Pin preference was not restored") }
+        try await waitForGeometry(reopened, width: 760, height: 610)
+        model.setPinned(reopened, originalPin)
+        if let pinnedBefore { UserDefaults.standard.set(pinnedBefore, forKey: "windowPinned-" + package) }
+        else { UserDefaults.standard.removeObject(forKey: "windowPinned-" + package) }
+        report["windowPreferencesRestored"] = true
+        if let restoredWindow = NSApp.windows.first(where: { $0.title == name + " · Macroid" }) { restoredWindow.setContentSize(originalSize) }
+    }
+    private static func waitForGeometry(_ session: MirrorSession, width: CGFloat, height: CGFloat) async throws {
+        for _ in 0..<500 {
+            if let error = session.error ?? session.renderer.error { throw WireError.remote(error) }
+            if session.ready, session.resizeTask == nil, session.renderer.currentFrameReady,
+               abs(CGFloat(session.width * 160) / CGFloat(session.density) - width) < 4,
+               abs(CGFloat(session.height * 160) / CGFloat(session.density) - height) < 4 { return }
+            try await Task.sleep(nanoseconds: 40_000_000)
+        }
+        throw WireError.remote("Resize did not settle: \(session.width)×\(session.height) @ \(session.density), expected \(width)×\(height) dp")
+    }
     // Explicit physical-device mirror check: no fixture installation, IME switch or file writes on the phone.
     private static func runMirrorTest(_ args: [String]) {
         guard let index = args.firstIndex(of: "--mirror-test"), args.indices.contains(index + 1),
               let outputIndex = args.firstIndex(of: "--integration-output"), args.indices.contains(outputIndex + 1) else { return }
         let serial = args[index + 1], output = URL(fileURLWithPath: args[outputIndex + 1], isDirectory: true)
         Task {
-            var report: [String: Any] = ["serial": serial, "architecture": ProcessInfo.processInfo.machineArchitecture, "version": "0.2.0"]
+            var report: [String: Any] = ["serial": serial, "architecture": ProcessInfo.processInfo.machineArchitecture, "version": "0.3.0"]
             let model = AppModel.shared
             do {
                 try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)

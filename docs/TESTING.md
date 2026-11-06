@@ -1,6 +1,58 @@
 # 验证记录
 
-测试日期：2026-11-05。0.1 的验证限于本项目 Android 模拟器；0.2 增加用户授权的一加 GM1910 / Android 12 真机投屏验证。以下先列 0.2 结果，再保留 0.1 的验证范围。
+最新测试日期：2026-11-06。以下先列 0.3 的结果，再保留 0.2 / 0.1 的历史验证范围。
+
+## 0.3 融合窗口、关屏使用与置顶
+
+本次真机测试由用户授权。证据位于 `artifacts/testing/v03/`，下面的路径均相对于该目录。
+
+| 环境 | 验证结果 | 证据 |
+| --- | --- | --- |
+| 一加 GM1910，Android 12 / API 31，Qualcomm AVC | 动态尺寸、双路编码、输入、物理关屏与恢复通过；独立焦点和锁屏隔离能力为 false，物理关屏为 true | `oneplus12/report.json` |
+| Pixel 8 Pro，Android 16 / API 36，Exynos AVC | 同上；独立焦点、锁屏隔离、物理关屏分别协商为 true | `pixel16/report.json` |
+| AOSP Android 12 / API 31，x86_64 模拟器 | 动态尺寸、双路编码、输入及全部 11 项基础协议回归通过 | `emulator31/report.json`、`smoke31/report.json` |
+| AOSP Android 14 / API 34，x86_64 模拟器 | 同上 | `emulator34/report.json`、`smoke34/report.json` |
+| Intel Mac + Pixel Android 16 | 原生融合窗口、连续缩放、双窗口解码、独立置顶、关闭重开后的尺寸和置顶恢复通过；输入法与未完成上传清理通过 | `mac-pixel16/mac-report.json` |
+| Intel Mac + AOSP Android 14 | 同上 | `mac34/mac-report.json` |
+| Intel Mac + 一加 Android 12 | 本次窗口功能及共享关屏开关均通过；后续输入法切换被 OEM 权限拒绝，因此整套报告的 `passed` 为 false | `mac-oneplus12/mac-report.json`、`mac-oneplus12/agent.log` |
+
+动态尺寸测试验证真实应用报告的 display ID、task ID、像素、density、dp、Insets 和点击状态。窄→宽→窄过程中 display/task ID 不变，应用状态保留，状态栏和导航栏不可见且 Insets 为 0。3200×1800 的请求降至 1920×1080 时 density 从 240 同步变为 144，应用仍收到约 2133×1200dp。测试还覆盖旧 generation 输入拒绝、非法尺寸拒绝、多窗口同时编码，以及调整尚未完成时关闭窗口。
+
+两台真机均验证融合和镜像在物理面板 `Off` 时继续输出视频，点击改变 fixture 状态；关闭最后一个窗口、socket EOF 和实际 `SIGKILL` Android agent 后，独立守护均将面板恢复为 `On`。判定物理面板时排除虚拟显示；没有用 Android 的逻辑交互状态代替面板电源状态。关屏失败不会提交已开启状态，不会修改用户的息屏超时设置。
+
+API 31 和 API 34 另外执行真实编码器故障注入：第一次重配置分配失败时恢复旧几何并继续出帧，display ID 保持不变；连恢复分配也失败时发送错误并释放副屏。注入入口仅为包内构造参数，测试 dex 独立加载，不进入产品 APK，也没有协议后门。API 34 输出保存在 `resize-failure34.log`，API 31 同样输出 `RESIZE_FAILURE_TEST_PASSED restore=true sameDisplay=true frames=true fatalCleanup=true`。
+
+Mac 的 `fusion-narrow.png`、`fusion-wide.png`、`fusion-narrow-again.png` 保存在 `mac-pixel16/` 和 `mac-oneplus12/`。已检查完整原生标题栏、贴边内容、无手机外壳，以及 fixture 从 Compact layout 切换到 Wide layout 后再切回。旧 `mac34/` 截图可能捕获 Activity 重建中的启动画面，视觉验收以较新的真机截图为准。布局切换由 fixture 自己响应 Android 配置完成，不代表所有第三方应用都提供平板布局。
+
+一加首轮 Mac 联调捕获到 Android 锁屏页，随后 ADB 查询返回 `error: closed`；该中断结果保留在 `mac-oneplus12-interrupted/`，未计为通过。设备解锁后的复测已通过本次全部窗口检查及 `screenPowerUI` 检查。后续旧功能回归执行 `ime enable` 时，系统明确拒绝 shell 的 `android.permission.WRITE_SECURE_SETTINGS`，所以未继续该设备上的输入法/文件清理环节，也未改变手机权限设置。Pixel 和两台模拟器的输入法相关回归均通过。一加的触控输入与关屏操作由独立真机协议测试确认通过。
+
+Swift 5 项单元测试通过，覆盖拆包/合包、协议拒绝、配置与视频边界顺序、pt/dp 几何及 Annex B。Android assemble/lint 和 Universal macOS 构建通过。Mac 运行测试使用 Intel；arm64 仅完成交叉编译和架构检查。减少动态效果遵循系统设置，但未单独完成该设置下的视觉验收；动画时长未用逐帧测量。未覆盖所有 OEM、长时间运行、所有手动锁屏情形，以及 agent 与守护同时被杀或系统整体关闭时的恢复。
+
+### 复现命令
+
+先构建并启动指定模拟器；不要让另一个会话占用同一设备：
+
+```bash
+swift test --package-path macos
+./scripts/build-android.sh
+./scripts/build-macos.sh
+python3 scripts/smoke-android.py --serial emulator-5582 --output artifacts/testing/v03/smoke31
+python3 scripts/test-window-features.py --serial emulator-5582 --output artifacts/testing/v03/emulator31
+python3 scripts/test-resize-failure.py --serial emulator-5582
+artifacts/Macroid.app/Contents/MacOS/Macroid \
+  --integration-test emulator-5580 --window-features \
+  --integration-output /absolute/path/to/macroid-test-output
+```
+
+真机必须显式传入 `--allow-device`；物理关屏测试另加 `--screen-power`，Mac 共享开关测试用 `--screen-power-test`。测试前在手机上解锁，Macroid 不代替用户认证。示例：
+
+```bash
+python3 scripts/test-window-features.py --serial DEVICE_SERIAL --allow-device --screen-power \
+  --output artifacts/testing/v03/device
+artifacts/Macroid.app/Contents/MacOS/Macroid \
+  --integration-test DEVICE_SERIAL --allow-device --window-features --screen-power-test \
+  --integration-output /absolute/path/to/macroid-device-output
+```
 
 ## 0.2 实机修复与回归
 

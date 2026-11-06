@@ -5,6 +5,8 @@ MACROID_SDK="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 if [[ ! -f "$MACROID_ROOT/artifacts/Macroid.apk" ]]; then "$MACROID_ROOT/scripts/build-android.sh"; fi
 mkdir -p "$MACROID_ROOT/macos/Resources"
 cp "$MACROID_ROOT/artifacts/Macroid.apk" "$MACROID_ROOT/macos/Resources/Macroid.apk"
+cp "$MACROID_ROOT/THIRD_PARTY_NOTICES.md" "$MACROID_ROOT/macos/Resources/THIRD_PARTY_NOTICES.md"
+cp "$MACROID_ROOT/LICENSES/scrcpy-Apache-2.0.txt" "$MACROID_ROOT/macos/Resources/scrcpy-Apache-2.0.txt"
 cp "$MACROID_SDK/platform-tools/adb" "$MACROID_ROOT/macos/Resources/adb"
 cp "$MACROID_SDK/platform-tools/NOTICE.txt" "$MACROID_ROOT/macos/Resources/adb-NOTICE.txt"
 chmod +x "$MACROID_ROOT/macos/Resources/adb"
