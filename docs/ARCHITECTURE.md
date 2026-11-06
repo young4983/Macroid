@@ -4,6 +4,8 @@
 
 Mac 应用 `io.macroid.desktop` 使用 SwiftUI 构建设备、应用、文件和设置页面；视频窗口以 AppKit 承载 AVSampleBufferDisplayLayer。客户端把 H.264 Annex B 拆成 NAL 单元，使用 SPS/PPS 建立 CoreMedia 视频格式，将访问单元改为长度前缀格式后交给系统解码。没有依赖 FFmpeg、SDL、官方客户端或官方服务端。
 
+菜单栏使用 SwiftUI `MenuBarExtra` 的原生菜单样式，单色 template 图标沿用应用的叠窗造型。主面板是带固定 ID 的单例 `Window`；菜单选择设备后立即打开“应用”页，再通过共享的 AppModel 连接，进度、成功列表和失败提示均在主面板显示。设备扫描归应用生命周期管理，关闭主面板不会停止扫描或断开连接；退出应用仍走统一清理路径。菜单与主面板共用设备、关屏和窗口状态，已有窗口可从菜单恢复最小化并置前。
+
 Android 助手 `io.macroid.bridge` 包含两个执行域：
 
 1. 普通 APK 进程仅提供 Macroid 输入法和受系统 DUMP 权限保护的显式广播接收器。没有 launcher Activity。

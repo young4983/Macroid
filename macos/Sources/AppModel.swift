@@ -76,7 +76,7 @@ struct AndroidApp: Identifiable {
     private var nextStream: UInt32 = 1
     private var windows: [UInt32: MirrorWindowController] = [:]
     private var iconTask: Task<Void, Never>?
-    private var disconnecting = false
+    @Published private(set) var disconnecting = false
 
     var connected: Bool { connectedDevice != nil }
     var filteredApps: [AndroidApp] {
@@ -92,7 +92,7 @@ struct AndroidApp: Identifiable {
         } catch { if !silent { self.error = error.localizedDescription } }
     }
     func connect() async {
-        guard !connecting, !connected, let device = devices.first(where: { $0.serial == selectedSerial }), device.available else { return }
+        guard !connecting, !disconnecting, !connected, let device = devices.first(where: { $0.serial == selectedSerial }), device.available else { return }
         connecting = true; error = nil; defer { connecting = false }
         do {
             let (port, token) = try await adb.start(serial: device.serial) { text in Task { @MainActor in self.status = text } }
@@ -159,7 +159,7 @@ struct AndroidApp: Identifiable {
         }
     }
     func open(_ app: AndroidApp? = nil) {
-        guard connected, let transport else { return }
+        guard connected, !disconnecting, let transport else { return }
         if let app, !fusionEnabled {
             Task {
                 do { _ = try await transport.request("apps.launch", ["package": app.package]); self.open() }
@@ -168,7 +168,7 @@ struct AndroidApp: Identifiable {
             return
         }
         // Reuse an existing window for a package; Android launch modes may only permit one task.
-        if let existing = sessions.values.first(where: { $0.package == app?.package }) { windows[existing.id]?.showWindow(nil); windows[existing.id]?.window?.makeKeyAndOrderFront(nil); return }
+        if let existing = sessions.values.first(where: { $0.package == app?.package }) { showStream(existing.id); return }
         guard sessions.count < 4 else { error = "最多同时打开四个窗口，实际数量还取决于手机编码器能力。"; return }
         let id = nextStream; nextStream += 1
         let session = MirrorSession(id: id, name: app?.name ?? "手机屏幕", package: app?.package, mode: app == nil ? "mirror" : "fusion", dynamicResize: app != nil && resizeSupported)
@@ -180,6 +180,12 @@ struct AndroidApp: Identifiable {
         let controller = MirrorWindowController(session: session, model: self)
         windows[id] = controller; controller.showWindow(nil); NSApp.activate(ignoringOtherApps: true)
         startStream(session, controller: controller)
+    }
+    func showStream(_ id: UInt32) {
+        guard !disconnecting, let controller = windows[id], let window = controller.window else { return }
+        controller.showWindow(nil)
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil)
     }
     private func startStream(_ session: MirrorSession, controller: MirrorWindowController) {
         guard let transport else { return }

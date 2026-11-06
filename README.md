@@ -15,24 +15,55 @@
 - H.264 投屏、点击/拖动/滚轮/返回/导航键、中文和 Unicode 输入、文件浏览与分块传输。
 - 融合窗口无手机外壳，可自由调整宽高；应用按 Android 实际 dp 尺寸自行切换布局。
 - 每个窗口独立记住置顶状态；支持的设备可关闭手机物理屏幕继续操作，最后一个窗口关闭时恢复。
+- macOS 菜单栏提供单色 Macroid 图标，可连接/断开设备、显示主面板、投屏、切回已有窗口及切换关屏使用。
 
 ## 下载与安装
 
-仓库中的 `artifacts/` 目录包含当前版本的可直接使用产物：
+当前版本为 **0.3.0**，对应 Git 标签 [`0.3`](https://github.com/young4983/Macroid/tree/0.3)。需要 macOS 13+、Android 12+；Mac 安装包同时支持 Intel 和 Apple Silicon。
 
-- [Macroid-macOS-universal.zip](artifacts/Macroid-macOS-universal.zip)：Universal 2 macOS 应用，解压后将 `Macroid.app` 拖到“应用程序”。
-- [Macroid.apk](artifacts/Macroid.apk)：Android 12+ 助手 APK。正常使用时由 Mac 应用自动安装；也可以通过 `adb install -r Macroid.apk` 手动安装。
-- [SHA256SUMS](artifacts/SHA256SUMS)：上述发布文件的 SHA-256 校验值。
+- [下载 Macroid 0.3 Mac 安装包](https://github.com/young4983/Macroid/raw/refs/tags/0.3/artifacts/Macroid-macOS-universal.zip)
+- [下载 Android 助手 APK](https://github.com/young4983/Macroid/raw/refs/tags/0.3/artifacts/Macroid.apk)（可选，Mac 应用会自动安装）
+- [SHA256SUMS 校验文件](https://github.com/young4983/Macroid/raw/refs/tags/0.3/artifacts/SHA256SUMS)
+
+### 首次安装
+
+1. 下载并解压 Mac 安装包，将 `Macroid.app` 拖到“应用程序”文件夹，再从该文件夹打开。
+2. Mac 安装包已内置 ADB 和 Android 助手，日常使用无需安装 Android Studio 或 Android SDK。
+3. 在手机开发者选项中开启 USB 调试，连接 Mac，并在手机上允许这台电脑调试。
+4. 在主面板或菜单栏中选择设备并连接；Macroid 会安装助手。助手没有桌面图标，无需在手机上手动打开。
+
+如果需要手动安装助手，可以使用 `adb install -r Macroid.apk`。仓库的 [`artifacts/`](artifacts/) 目录也保留应用压缩包、APK 和校验文件。
 
 macOS 应用使用本地 ad-hoc 签名，没有 Developer ID 签名或 Apple 公证。首次打开时，如果系统提示无法验证开发者，请在 Finder 中右键点击应用并选择“打开”，或到“系统设置 → 隐私与安全性”允许打开。Android APK 使用本地开发密钥签名。
+
+### 更新已有安装
+
+1. 在旧版 Macroid 菜单栏中选择“退出 Macroid”，或按 `⌘Q`。仅关闭主面板不会退出；正常退出会断开设备并恢复本次会话控制的手机屏幕和输入法。
+2. 下载新版安装包并解压，用新的 `Macroid.app` 替换“应用程序”中的旧版。不要同时运行旧版与新版。
+3. 重新打开“应用程序”中的 Macroid 并连接手机。应用会通过覆盖安装更新内置 Android 助手，通常无需手动卸载助手。
+4. 收藏、融合窗口位置/尺寸、置顶等偏好继续保留；“关屏使用”需要在每次连接后手动开启。可在菜单栏的“关于 Macroid”查看应用版本。
+
+当前没有自动更新器，需要手动下载并替换应用。如果系统要求重新确认打开，按上面的首次打开步骤处理。
+
+### 0.3 更新内容
+
+- 融合窗口改为原生 macOS 外观，自由调整宽高；实际调整 Android 副屏尺寸，由应用决定是否切换平板布局。
+- 调整尺寸时保留旧画面，新画面就绪后淡入；保留副屏 ID，并提供编码器失败恢复。
+- 新增设备级“关屏使用”和每窗口独立置顶；关屏可在会话结束、连接断开及 Android agent 异常退出时恢复。
+- 新增菜单栏入口：连接/断开、显示主面板、手机投屏、已有窗口、关屏、设置与帮助。选择设备连接时立即显示主面板及连接进度，成功后展示应用列表。
+- Android 12 与 Android 16 真机已验证本次核心功能；详细范围及已知限制见[验证记录](docs/TESTING.md)。
 
 ### 运行 Macroid
 
 1. 打开 Macroid，将 Android 手机通过 USB 连接到 Mac；手机需运行 Android 12 或更高版本，并在开发者选项中开启 USB 调试。
-2. 在手机上确认“允许这台电脑进行 USB 调试”，回到 Macroid 的“设备”页选择设备并连接。
+2. 在手机上确认“允许这台电脑进行 USB 调试”，回到 Macroid 的“设备”页选择设备并连接；也可以点击菜单栏叠窗图标 →“连接设备”→ 设备名，主面板会自动显示。
 3. 在“应用”页点击应用图标，它会在独立窗口中打开；“手机屏幕”可投屏手机主屏。
 4. 拖动融合窗口边缘可调整应用布局；“更多操作”菜单包含“窗口置顶”和“关屏使用”。关屏前先在手机上解锁，开关作用于当前设备所有窗口。是否有平板布局由应用决定。
 5. 中文输入时，在窗口右上角启用 Macroid 键盘。退出或正常断开连接时，Macroid 会恢复原输入法并释放虚拟显示。
+
+关闭主面板后，Macroid 继续驻留菜单栏并刷新设备。点击菜单栏的叠窗图标可重新显示主面板；要结束会话并退出应用，选择菜单中的“退出 Macroid”。
+
+已连接时，菜单第一项显示设备名，其子菜单可断开连接。“已打开的窗口”可恢复最小化的应用窗口；“关屏使用”与投屏窗口中的同名开关共享设备状态。
 
 也可以在“设备 → Wi-Fi 连接”中使用 Android 无线调试的配对码配对设备。无线连接不会自动接管已有 USB 会话，需要先断开后重新选择 Wi-Fi 设备连接。
 
@@ -59,6 +90,7 @@ macOS 应用使用本地 ad-hoc 签名，没有 Developer ID 签名或 Apple 公
 | 中文 / Unicode | Mac 系统输入法组合文字，Android Macroid IME 提交文本；启用时需要用户确认 |
 | 文件 | 浏览共享存储、分块上传/下载、进度与取消；拒绝覆盖同名手机文件 |
 | macOS UI | 原生窄面板、分段导航、应用图标网格、搜索、收藏、独立窗口、文件与设置 |
+| 菜单栏 | 设备连接/断开、自动显示主面板、投屏、恢复已有窗口、关屏、设置与退出；主面板关闭后继续可用 |
 | 编码兼容 | 查询编码器能力，自动降低帧率/分辨率，提供备用编码器和持久诊断 |
 
 ## 当前边界

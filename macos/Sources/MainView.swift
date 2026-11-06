@@ -56,13 +56,6 @@ struct MainView: View {
             }.padding(.horizontal, 20).frame(height: 34)
         }
         .background(.regularMaterial).background(MainWindowChrome()).frame(minWidth: 360, idealWidth: 392, maxWidth: 480, minHeight: 580, idealHeight: 690)
-        .task {
-            await model.refresh()
-            while !Task.isCancelled {
-                do { try await Task.sleep(nanoseconds: 3_000_000_000) } catch { break }
-                await model.refresh(silent: true)
-            }
-        }
         .sheet(isPresented: $wireless) { WirelessConnectionView(model: model) }
         .alert("Macroid", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("好") { model.error = nil }

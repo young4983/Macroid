@@ -5,7 +5,7 @@ import SwiftUI
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var model = AppModel.shared
     var body: some Scene {
-        WindowGroup { MainView(model: model) }.defaultSize(width: 392, height: 690)
+        Window("Macroid", id: "main") { MainView(model: model) }.defaultSize(width: 392, height: 690)
             .windowStyle(.hiddenTitleBar).windowResizability(.contentSize)
             .commands {
                 CommandGroup(replacing: .newItem) { }
@@ -15,6 +15,11 @@ import SwiftUI
                     Button("断开连接") { Task { await model.disconnect() } }.disabled(!model.connected)
                 }
             }
+        MenuBarExtra {
+            StatusMenu(model: model)
+        } label: {
+            Image(nsImage: StatusMenu.icon).accessibilityLabel("Macroid")
+        }.menuBarExtraStyle(.menu)
         Settings {
             VStack(alignment: .leading, spacing: 16) {
                 Text("ADB 工具").font(.headline)
@@ -26,7 +31,20 @@ import SwiftUI
 }
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) { IntegrationHarness.runIfRequested() }
+    private var deviceRefreshTask: Task<Void, Never>?
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Device discovery must outlive the main panel so the menu remains useful after closing it.
+        deviceRefreshTask = Task {
+            await AppModel.shared.refresh()
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 3_000_000_000) } catch { break }
+                await AppModel.shared.refresh(silent: true)
+            }
+        }
+        IntegrationHarness.runIfRequested()
+    }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    func applicationWillTerminate(_ notification: Notification) { deviceRefreshTask?.cancel() }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard AppModel.shared.connected || AppModel.shared.connecting else { return .terminateNow }
         Task { await AppModel.shared.disconnect(); sender.reply(toApplicationShouldTerminate: true) }
