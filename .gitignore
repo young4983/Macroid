@@ -1,0 +1,31 @@
+# macOS / IDE
+.DS_Store
+xcuserdata/
+*.xcuserstate
+
+# Swift Package Manager / Xcode derived data
+.build/
+build/
+
+# Android / Gradle
+.gradle/
+local.properties
+*.iml
+
+# Local signing material
+*.keystore
+*.jks
+
+# Generated macOS bundle resources; build-macos.sh recreates these files.
+macos/Resources/*
+
+# Test logs, captures and the uncompressed app bundle are local build output.
+artifacts/testing/
+artifacts/Macroid.app/
+artifacts/Macroid-source.zip
+
+# Keep the reproducible release files in the repository.
+!artifacts/
+!artifacts/Macroid.apk
+!artifacts/Macroid-macOS-universal.zip
+!artifacts/SHA256SUMS
