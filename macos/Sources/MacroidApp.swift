@@ -1,6 +1,15 @@
 import AppKit
 import SwiftUI
 
+@MainActor enum ApplicationIcon {
+    // Load the shipped artwork directly; Launch Services may retain an icon from an older build.
+    static let image: NSImage = {
+        if let url = Bundle.main.url(forResource: "Macroid", withExtension: "icns"),
+           let image = NSImage(contentsOf: url) { return image }
+        return NSApplication.shared.applicationIconImage
+    }()
+}
+
 @main struct MacroidApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var model = AppModel.shared
@@ -33,6 +42,7 @@ import SwiftUI
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     private var deviceRefreshTask: Task<Void, Never>?
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.applicationIconImage = ApplicationIcon.image
         // Device discovery must outlive the main panel so the menu remains useful after closing it.
         deviceRefreshTask = Task {
             await AppModel.shared.refresh()

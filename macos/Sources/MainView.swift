@@ -31,7 +31,7 @@ private struct PanelSurface: ViewModifier {
 struct BrandMark: View {
     var size: CGFloat = 42
     var body: some View {
-        Image(nsImage: NSApplication.shared.applicationIconImage)
+        Image(nsImage: ApplicationIcon.image)
             .resizable().interpolation(.high).scaledToFit()
             .frame(width: size, height: size).accessibilityHidden(true)
     }
