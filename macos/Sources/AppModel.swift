@@ -7,7 +7,9 @@ struct AndroidApp: Identifiable {
 }
 
 @MainActor final class MirrorSession: ObservableObject, Identifiable {
-    let id: UInt32, name: String, package: String?, mode: String
+    let id: UInt32, package: String?, mode: String
+    private let appName: String
+    var name: String { package == nil ? L("手机屏幕") : appName }
     let renderer = VideoRenderer()
     @Published var width = 720
     @Published var height = 1280
@@ -33,7 +35,7 @@ struct AndroidApp: Identifiable {
     @Published var encoding = ""
     @Published var error: String?
     init(id: UInt32, name: String, package: String?, mode: String, dynamicResize: Bool = false) {
-        self.id = id; self.name = name; self.package = package; self.mode = mode; self.dynamicResize = dynamicResize
+        self.id = id; self.appName = name; self.package = package; self.mode = mode; self.dynamicResize = dynamicResize
         if let package, let stored = UserDefaults.standard.string(forKey: "fusionQuality-" + package), let value = FusionQuality(rawValue: stored) { quality = value }
     }
     func apply(_ info: [String: Any]) {
@@ -397,7 +399,7 @@ struct AndroidApp: Identifiable {
         } catch { self.error = error.localizedDescription }
     }
     func chooseADB() {
-        let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.message = "选择 Android platform-tools 中的 adb 可执行文件"
+        let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.message = L("选择 Android platform-tools 中的 adb 可执行文件")
         if panel.runModal() == .OK, let url = panel.url { UserDefaults.standard.set(url.path, forKey: "adbPath"); if !connected { adb = ADBClient() } }
     }
 }

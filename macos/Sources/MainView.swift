@@ -29,6 +29,7 @@ private struct PanelSurface: ViewModifier {
 }
 
 struct BrandMark: View {
+    @ObservedObject private var language = LanguageSettings.shared
     var size: CGFloat = 42
     var body: some View {
         Image(nsImage: ApplicationIcon.image)
@@ -38,6 +39,7 @@ struct BrandMark: View {
 }
 
 struct MainView: View {
+    @ObservedObject private var language = LanguageSettings.shared
     @ObservedObject var model: AppModel
     @State private var wireless = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -48,7 +50,7 @@ struct MainView: View {
                 BrandMark(size: 32)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Macroid").font(.system(size: 20, weight: .semibold, design: .rounded))
-                    Text("让 Android 融入你的 Mac").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(L("让 Android 融入你的 Mac")).font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button { Task { await model.refresh() } } label: {
@@ -61,15 +63,15 @@ struct MainView: View {
                     }.frame(width: 30, height: 30)
                         .background(.thinMaterial, in: Circle())
                 }.buttonStyle(.plain).foregroundStyle(.secondary)
-                    .help("刷新设备").accessibilityLabel("刷新设备")
+                    .help(L("刷新设备")).accessibilityLabel(L("刷新设备"))
                     .disabled(model.refreshing || model.connecting || model.disconnecting)
             }.padding(.horizontal, 20).padding(.vertical, 16)
 
             HStack(spacing: 3) {
-                navigationItem("应用", icon: "square.grid.2x2", section: "apps")
-                navigationItem("文件", icon: "folder", section: "files")
-                navigationItem("设备", icon: "smartphone", section: "devices")
-                navigationItem("设置", icon: "slider.horizontal.3", section: "settings")
+                navigationItem(L("应用"), icon: "square.grid.2x2", section: "apps")
+                navigationItem(L("文件"), icon: "folder", section: "files")
+                navigationItem(L("设备"), icon: "smartphone", section: "devices")
+                navigationItem(L("设置"), icon: "slider.horizontal.3", section: "settings")
             }.padding(4).modifier(PanelSurface(radius: 13))
                 .padding(.horizontal, 20).padding(.bottom, 16)
 
@@ -91,16 +93,16 @@ struct MainView: View {
             HStack(spacing: 7) {
                 Circle().fill(model.connecting || model.disconnecting ? .orange : model.connected ? .green : Color.secondary.opacity(0.4))
                     .frame(width: 5, height: 5)
-                Text(model.disconnecting ? "正在断开连接…" : model.connecting ? model.status : model.connected ? "\(model.connectedDevice?.connectionLabel ?? "") 已连接" : "等待连接设备")
+                Text(model.disconnecting ? L("正在断开连接…") : model.connecting ? L10n.message(model.status) : model.connected ? L("%1$@ 已连接", model.connectedDevice?.connectionLabel ?? "") : L("等待连接设备"))
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 if model.connected {
-                    Label("\(model.sessions.count) 个窗口", systemImage: "macwindow").monospacedDigit()
+                    Label(L("%1$@ 个窗口", String(model.sessions.count)), systemImage: "macwindow").monospacedDigit()
                 } else {
                     Text("USB / Wi-Fi").foregroundStyle(.tertiary)
                 }
             }.font(.system(size: 10)).foregroundStyle(.secondary)
-                .padding(.horizontal, 20).frame(height: 34).help(model.status)
+                .padding(.horizontal, 20).frame(height: 34).help(L10n.message(model.status))
         }
         .background {
             ZStack {
@@ -112,8 +114,8 @@ struct MainView: View {
         .frame(minWidth: 360, idealWidth: 392, maxWidth: 480, minHeight: 580, idealHeight: 690)
         .sheet(isPresented: $wireless) { WirelessConnectionView(model: model) }
         .alert("Macroid", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
-            Button("好") { model.error = nil }
-        } message: { Text(model.error ?? "") }
+            Button(L("好")) { model.error = nil }
+        } message: { Text(L10n.message(model.error ?? "")) }
     }
 
     private func navigationItem(_ title: String, icon: String, section: String) -> some View {
@@ -139,6 +141,7 @@ struct MainView: View {
 }
 
 struct WelcomeView: View {
+    @ObservedObject private var language = LanguageSettings.shared
     @ObservedObject var model: AppModel
     @Binding var wireless: Bool
     var body: some View {
@@ -148,17 +151,17 @@ struct WelcomeView: View {
                     Image(systemName: "macbook.and.iphone")
                         .font(.system(size: 38, weight: .light)).foregroundStyle(PanelStyle.gradient)
                         .frame(height: 48)
-                    Text("手机应用，桌面随行").font(.system(size: 19, weight: .semibold))
-                    Text("连接 Android，把熟悉的应用带到 Mac。")
+                    Text(L("手机应用，桌面随行")).font(.system(size: 19, weight: .semibold))
+                    Text(L("连接 Android，把熟悉的应用带到 Mac。"))
                         .font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 }.frame(maxWidth: .infinity).padding(.top, 8).padding(.bottom, 6)
                 DeviceCard(model: model)
                 WirelessCard(isPresented: $wireless, disabled: model.connecting || model.disconnecting)
                 VStack(alignment: .leading, spacing: 13) {
-                    Text("首次连接").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                    connectionStep("1", title: "用 USB 连接手机", detail: "在开发者选项中开启 USB 调试")
-                    connectionStep("2", title: "允许这台 Mac", detail: "确认手机上的调试授权")
-                    connectionStep("3", title: "点击连接，开始使用", detail: "自动安装助手，无桌面图标")
+                    Text(L("首次连接")).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                    connectionStep("1", title: L("用 USB 连接手机"), detail: L("在开发者选项中开启 USB 调试"))
+                    connectionStep("2", title: L("允许这台 Mac"), detail: L("确认手机上的调试授权"))
+                    connectionStep("3", title: L("点击连接，开始使用"), detail: L("自动安装助手，无桌面图标"))
                 }.padding(16).frame(maxWidth: .infinity, alignment: .leading).modifier(PanelSurface())
                 Text("macOS 13+ · Android 12+").font(.caption2).foregroundStyle(.tertiary)
             }.padding(.horizontal, 20).padding(.bottom, 20)
@@ -178,6 +181,7 @@ struct WelcomeView: View {
 }
 
 struct DeviceCard: View {
+    @ObservedObject private var language = LanguageSettings.shared
     @ObservedObject var model: AppModel
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -189,42 +193,42 @@ struct DeviceCard: View {
                         Text(device.model).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                         HStack(spacing: 4) {
                             Circle().fill(.green).frame(width: 4, height: 4)
-                            Text("已连接 · \(device.connectionLabel) · Android \(androidVersion)").lineLimit(1)
+                            Text(L("已连接 · %1$@ · Android %2$@", device.connectionLabel, androidVersion)).lineLimit(1)
                         }.font(.system(size: 10)).foregroundStyle(.secondary)
                     } else if !model.devices.isEmpty {
-                        Picker("设备", selection: $model.selectedSerial) {
+                        Picker(L("设备"), selection: $model.selectedSerial) {
                             ForEach(model.devices) { device in Text("\(device.model) · \(device.connectionLabel)").tag(device.serial) }
                         }.labelsHidden().disabled(model.connecting || model.disconnecting)
-                        Text(model.connecting ? model.status : selectedDevice?.stateLabel ?? "选择设备")
+                        Text(model.connecting ? L10n.message(model.status) : selectedDevice.map { L10n.message($0.stateLabel) } ?? L("选择设备"))
                             .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     } else {
-                        Text(model.refreshing ? "正在查找设备…" : "尚未发现设备").font(.system(size: 13, weight: .semibold))
-                        Text("连接 USB，或通过 Wi-Fi 添加设备").font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text(model.refreshing ? L("正在查找设备…") : L("尚未发现设备")).font(.system(size: 13, weight: .semibold))
+                        Text(L("连接 USB，或通过 Wi-Fi 添加设备")).font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                 }
                 Spacer(minLength: 0)
                 if model.connected {
-                    Button { model.open() } label: { Label("屏幕镜像", systemImage: "rectangle.on.rectangle").font(.system(size: 11, weight: .medium)) }
+                    Button { model.open() } label: { Label(L("屏幕镜像"), systemImage: "rectangle.on.rectangle").font(.system(size: 11, weight: .medium)) }
                         .buttonStyle(.borderedProminent).controlSize(.small)
-                        .disabled(model.disconnecting).help("镜像手机当前屏幕").accessibilityLabel("屏幕镜像")
+                        .disabled(model.disconnecting).help(L("镜像手机当前屏幕")).accessibilityLabel(L("屏幕镜像"))
                 }
             }
             if model.connected {
                 Rectangle().fill(Color.primary.opacity(0.06)).frame(height: 1)
                 HStack(spacing: 7) {
                     Image(systemName: "macwindow").font(.system(size: 12)).foregroundStyle(brand)
-                    Text("融合模式").font(.system(size: 12, weight: .medium))
+                    Text(L("融合模式")).font(.system(size: 12, weight: .medium))
                     if model.sdk < 34 {
-                        Text("兼容").font(.system(size: 9)).foregroundStyle(.secondary)
+                        Text(L("兼容")).font(.system(size: 9)).foregroundStyle(.secondary)
                             .padding(.horizontal, 5).padding(.vertical, 2).background(Color.primary.opacity(0.04), in: Capsule())
                     }
                     Spacer()
-                    Toggle("融合模式", isOn: Binding(get: { model.fusionEnabled }, set: { model.fusionEnabled = $0 }))
+                    Toggle(L("融合模式"), isOn: Binding(get: { model.fusionEnabled }, set: { model.fusionEnabled = $0 }))
                         .labelsHidden().toggleStyle(.switch).controlSize(.mini).disabled(model.disconnecting)
-                }.help("开启后，应用在独立的 Mac 窗口中打开；关闭后，在手机主屏幕中打开并投屏。")
+                }.help(L("开启后，应用在独立的 Mac 窗口中打开；关闭后，在手机主屏幕中打开并投屏。"))
             } else {
                 Button { Task { await model.connect() } } label: {
-                    HStack { if model.connecting { ProgressView().controlSize(.small) }; Text(model.connecting ? "正在连接…" : "连接设备") }.frame(maxWidth: .infinity)
+                    HStack { if model.connecting { ProgressView().controlSize(.small) }; Text(model.connecting ? L("正在连接…") : L("连接设备")) }.frame(maxWidth: .infinity)
                 }.buttonStyle(.borderedProminent).controlSize(.large)
                     .disabled(model.connecting || model.disconnecting || selectedDevice?.available != true)
             }
@@ -236,6 +240,7 @@ struct DeviceCard: View {
 }
 
 private struct WirelessCard: View {
+    @ObservedObject private var language = LanguageSettings.shared
     @Binding var isPresented: Bool
     var disabled = false
 
@@ -245,8 +250,8 @@ private struct WirelessCard: View {
                 Image(systemName: "wifi").font(.system(size: 16)).foregroundStyle(brand)
                     .frame(width: 32, height: 32).background(brand.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("通过 Wi-Fi 连接").font(.system(size: 12, weight: .medium)).foregroundStyle(.primary)
-                    Text("同一网络，自由连接").font(.system(size: 10)).foregroundStyle(.secondary)
+                    Text(L("通过 Wi-Fi 连接")).font(.system(size: 12, weight: .medium)).foregroundStyle(.primary)
+                    Text(L("同一网络，自由连接")).font(.system(size: 10)).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
@@ -256,27 +261,28 @@ private struct WirelessCard: View {
 }
 
 struct DevicesView: View {
+    @ObservedObject private var language = LanguageSettings.shared
     @ObservedObject var model: AppModel
     @Binding var wireless: Bool
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text(model.connected ? "当前设备" : "连接设备").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                Text(model.connected ? L("当前设备") : L("连接设备")).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
                 DeviceCard(model: model)
                 if model.connected {
                     HStack(alignment: .top, spacing: 12) {
-                        Text(model.status).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Text(L10n.message(model.status)).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
-                        Button("断开连接", role: .destructive) { Task { await model.disconnect() } }
+                        Button(L("断开连接"), role: .destructive) { Task { await model.disconnect() } }
                             .controlSize(.small).disabled(model.disconnecting)
                     }
                     if let device = model.connectedDevice, !device.wireless {
-                        Text("当前通过 USB 传输。拔线前请先在 Wi-Fi 中配对并选择无线设备重新连接。")
+                        Text(L("当前通过 USB 传输。拔线前请先在 Wi-Fi 中配对并选择无线设备重新连接。"))
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 WirelessCard(isPresented: $wireless, disabled: model.connecting || model.disconnecting)
-                Text("手机与 Mac 需要在同一局域网。无线设备连接后，投屏不再依赖 USB 数据线。")
+                Text(L("手机与 Mac 需要在同一局域网。无线设备连接后，投屏不再依赖 USB 数据线。"))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }.padding(.horizontal, 20).padding(.bottom, 20)
         }
@@ -284,6 +290,7 @@ struct DevicesView: View {
 }
 
 struct ApplicationsView: View {
+    @ObservedObject private var language = LanguageSettings.shared
     @ObservedObject var model: AppModel
 
     var body: some View {
@@ -291,11 +298,11 @@ struct ApplicationsView: View {
             DeviceCard(model: model)
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(.secondary)
-                TextField("搜索应用或包名", text: $model.search).font(.system(size: 12)).textFieldStyle(.plain)
-                    .accessibilityLabel("搜索应用或包名")
+                TextField(L("搜索应用或包名"), text: $model.search).font(.system(size: 12)).textFieldStyle(.plain)
+                    .accessibilityLabel(L("搜索应用或包名"))
                 if !model.search.isEmpty {
                     Button { model.search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                        .buttonStyle(.plain).help("清除搜索").accessibilityLabel("清除搜索")
+                        .buttonStyle(.plain).help(L("清除搜索")).accessibilityLabel(L("清除搜索"))
                 }
             }.padding(.horizontal, 12).frame(height: 36)
                 .background(Color(nsColor: .textBackgroundColor).opacity(0.75), in: RoundedRectangle(cornerRadius: 11))
@@ -303,17 +310,17 @@ struct ApplicationsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     if model.apps.isEmpty && model.connecting {
-                        HStack(spacing: 8) { ProgressView().controlSize(.small); Text("正在读取应用…").font(.callout).foregroundStyle(.secondary) }
+                        HStack(spacing: 8) { ProgressView().controlSize(.small); Text(L("正在读取应用…")).font(.callout).foregroundStyle(.secondary) }
                             .frame(maxWidth: .infinity).padding(.top, 40)
                     } else if model.filteredApps.isEmpty {
                         emptyState
                     } else if !model.search.isEmpty {
-                        appSection("搜索结果", apps: model.filteredApps)
+                        appSection(L("搜索结果"), apps: model.filteredApps)
                     } else {
                         let favorites = model.apps.filter { model.favorites.contains($0.package) }
                         let others = model.apps.filter { !model.favorites.contains($0.package) }
-                        if !favorites.isEmpty { appSection("收藏应用", apps: favorites, icon: "star.fill") }
-                        if !others.isEmpty { appSection(favorites.isEmpty ? "全部应用" : "其他应用", apps: others) }
+                        if !favorites.isEmpty { appSection(L("收藏应用"), apps: favorites, icon: "star.fill") }
+                        if !others.isEmpty { appSection(favorites.isEmpty ? L("全部应用") : L("其他应用"), apps: others) }
                     }
                 }.padding(.top, 4).padding(.bottom, 8)
             }
@@ -338,15 +345,16 @@ struct ApplicationsView: View {
         VStack(spacing: 10) {
             Image(systemName: model.search.isEmpty ? "square.grid.2x2" : "magnifyingglass")
                 .font(.system(size: 28, weight: .light)).foregroundStyle(.tertiary)
-            Text(model.search.isEmpty ? "暂无可打开的应用" : "没有找到应用").font(.system(size: 13, weight: .medium))
-            Text(model.search.isEmpty ? "请检查设备连接后重试。" : "试试其他应用名称或包名。")
+            Text(model.search.isEmpty ? L("暂无可打开的应用") : L("没有找到应用")).font(.system(size: 13, weight: .medium))
+            Text(model.search.isEmpty ? L("请检查设备连接后重试。") : L("试试其他应用名称或包名。"))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
-            if !model.search.isEmpty { Button("清除搜索") { model.search = "" }.buttonStyle(.link).font(.system(size: 12)) }
+            if !model.search.isEmpty { Button(L("清除搜索")) { model.search = "" }.buttonStyle(.link).font(.system(size: 12)) }
         }.frame(maxWidth: .infinity).padding(.top, 36)
     }
 }
 
 struct AppCard: View {
+    @ObservedObject private var language = LanguageSettings.shared
     let app: AndroidApp
     @ObservedObject var model: AppModel
     @State private var hovering = false
@@ -372,36 +380,38 @@ struct AppCard: View {
                 .contentShape(RoundedRectangle(cornerRadius: 12))
         }.buttonStyle(.plain).onHover { hovering = $0 }.disabled(model.disconnecting)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: hovering)
-            .help("\(app.name)\n\(app.package)\(isOpen ? "\n窗口已打开，点击返回窗口" : "")")
-            .accessibilityLabel("\(app.name)\(isOpen ? "，窗口已打开" : "")")
-            .contextMenu { Button(model.favorites.contains(app.package) ? "取消收藏" : "收藏应用", systemImage: "star") { model.toggleFavorite(app) } }
+            .help("\(app.name)\n\(app.package)\(isOpen ? "\n" + L("窗口已打开，点击返回窗口") : "")")
+            .accessibilityLabel(isOpen ? L("%1$@，窗口已打开", app.name) : app.name)
+            .contextMenu { Button(model.favorites.contains(app.package) ? L("取消收藏") : L("收藏应用"), systemImage: "star") { model.toggleFavorite(app) } }
     }
 }
 
 struct GuideView: View {
+    @ObservedObject private var language = LanguageSettings.shared
     @ObservedObject var model: AppModel
     var body: some View {
         Form {
-            Section("应用窗口") {
-                Toggle("融合模式", isOn: Binding(get: { model.fusionEnabled }, set: { model.fusionEnabled = $0 }))
-                Text("开启后，应用在原生窗口中运行。拖拽窗口会改变 Android 副屏尺寸，支持的应用会自行切换宽屏布局。Android 12/13 的焦点和输入法可能与手机共享。关闭后，应用在手机主屏幕打开并投屏。")
+            Section(L("语言")) { LanguagePicker() }
+            Section(L("应用窗口")) {
+                Toggle(L("融合模式"), isOn: Binding(get: { model.fusionEnabled }, set: { model.fusionEnabled = $0 }))
+                Text(L("开启后，应用在原生窗口中运行。拖拽窗口会改变 Android 副屏尺寸，支持的应用会自行切换宽屏布局。Android 12/13 的焦点和输入法可能与手机共享。关闭后，应用在手机主屏幕打开并投屏。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("连接") {
-                Button("选择 ADB 工具…") { model.chooseADB() }
-                Button("恢复内置 ADB") { UserDefaults.standard.removeObject(forKey: "adbPath") }
-                Button("查看连接诊断…") { NSWorkspace.shared.activateFileViewerSelecting([ADBClient.diagnosticsURL]) }
-                Text("USB 和已配对的无线调试均可使用。连接方式显示在设备页；当前版本需要重新连接来切换传输方式。")
+            Section(L("连接")) {
+                Button(L("选择 ADB 工具…")) { model.chooseADB() }
+                Button(L("恢复内置 ADB")) { UserDefaults.standard.removeObject(forKey: "adbPath") }
+                Button(L("查看连接诊断…")) { NSWorkspace.shared.activateFileViewerSelecting([ADBClient.diagnosticsURL]) }
+                Text(L("USB 和已配对的无线调试均可使用。连接方式显示在设备页；当前版本需要重新连接来切换传输方式。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("操作提示") {
-                Text("右键或 Esc 返回；⌘V 输入剪贴板文字。中文输入请在投屏窗口启用 Macroid 键盘，断开时恢复原输入法。")
-                Text("窗口的更多操作中可分别设置窗口置顶；关屏使用会关闭手机物理屏幕，影响当前设备的所有窗口，关闭最后一个窗口时恢复。请先在手机上解锁。")
-                Text("音频、通知和摄像头映射尚未实现。手机旋转后请重新打开投屏窗口。")
+            Section(L("操作提示")) {
+                Text(L("右键或 Esc 返回；⌘V 输入剪贴板文字。中文输入请在投屏窗口启用 Macroid 键盘，断开时恢复原输入法。"))
+                Text(L("窗口的更多操作中可分别设置窗口置顶；关屏使用会关闭手机物理屏幕，影响当前设备的所有窗口，关闭最后一个窗口时恢复。请先在手机上解锁。"))
+                Text(L("音频、通知和摄像头映射尚未实现。投屏跟随手机方向，也可通过工具栏旋转。"))
             }.font(.caption).foregroundStyle(.secondary)
             Section {
                 HStack { BrandMark(size: 28); VStack(alignment: .leading) { Text("Macroid").font(.headline); Text("0.3.0 · macOS 13+ · Android 12+").font(.caption).foregroundStyle(.secondary) } }
-                Text("助手无桌面图标，可在 Android 应用设置中卸载。最多同时打开四个窗口，受手机能力与应用限制。")
+                Text(L("助手无桌面图标，可在 Android 应用设置中卸载。最多同时打开四个窗口，受手机能力与应用限制。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)
@@ -409,6 +419,7 @@ struct GuideView: View {
 }
 
 struct WirelessConnectionView: View {
+    @ObservedObject private var language = LanguageSettings.shared
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var needsPairing = true
@@ -417,23 +428,23 @@ struct WirelessConnectionView: View {
     @State private var address = UserDefaults.standard.string(forKey: "wirelessAddress") ?? ""
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Label("Wi-Fi 连接", systemImage: "wifi").font(.title2.weight(.semibold))
-            Text("在手机“开发者选项 → 无线调试”中开启无线调试，让手机与 Mac 连接同一 Wi-Fi。")
+            Label(L("Wi-Fi 连接"), systemImage: "wifi").font(.title2.weight(.semibold))
+            Text(L("在手机“开发者选项 → 无线调试”中开启无线调试，让手机与 Mac 连接同一 Wi-Fi。"))
                 .font(.callout).foregroundStyle(.secondary)
-            Toggle("首次配对", isOn: $needsPairing).toggleStyle(.switch).controlSize(.small)
+            Toggle(L("首次配对"), isOn: $needsPairing).toggleStyle(.switch).controlSize(.small)
             if needsPairing {
-                Text("打开“使用配对码配对设备”，填写该弹窗里的地址和配对码。").font(.caption).foregroundStyle(.secondary)
-                TextField("配对地址，例如 192.168.1.10:37123", text: $pairing)
-                SecureField("6 位配对码", text: $code)
+                Text(L("打开“使用配对码配对设备”，填写该弹窗里的地址和配对码。")).font(.caption).foregroundStyle(.secondary)
+                TextField(L("配对地址，例如 192.168.1.10:37123"), text: $pairing)
+                SecureField(L("6 位配对码"), text: $code)
             }
-            TextField("连接地址，例如 192.168.1.10:40125", text: $address)
-            Text("连接地址来自无线调试主页，端口通常与配对端口不同。").font(.caption).foregroundStyle(.secondary)
-            if !model.wirelessStatus.isEmpty { Text(model.wirelessStatus).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
+            TextField(L("连接地址，例如 192.168.1.10:40125"), text: $address)
+            Text(L("连接地址来自无线调试主页，端口通常与配对端口不同。")).font(.caption).foregroundStyle(.secondary)
+            if !model.wirelessStatus.isEmpty { Text(L10n.message(model.wirelessStatus)).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
             HStack {
                 if model.wirelessBusy { ProgressView().controlSize(.small) }
                 Spacer()
-                Button("取消") { code = ""; dismiss() }.keyboardShortcut(.cancelAction).disabled(model.wirelessBusy)
-                Button(needsPairing ? "配对并连接" : "连接") {
+                Button(L("取消")) { code = ""; dismiss() }.keyboardShortcut(.cancelAction).disabled(model.wirelessBusy)
+                Button(needsPairing ? L("配对并连接") : L("连接")) {
                     Task {
                         let success = await model.connectWireless(pairing: needsPairing ? pairing : nil, code: code, address: address)
                         code = ""

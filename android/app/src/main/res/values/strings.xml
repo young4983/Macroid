@@ -1,1 +1,4 @@
-<resources><string name="app_name">Macroid</string><string name="keyboard_name">Macroid 键盘</string></resources>
+<resources>
+    <string name="app_name" translatable="false">Macroid</string>
+    <string name="keyboard_name">Macroid Keyboard</string>
+</resources>

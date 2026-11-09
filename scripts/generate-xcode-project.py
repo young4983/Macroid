@@ -6,6 +6,8 @@ import hashlib
 root = Path(__file__).resolve().parents[1] / 'macos'
 sources = sorted(p.name for p in (root / 'Sources').glob('*.swift'))
 resources = ['Macroid.apk', 'adb', 'adb-NOTICE.txt', 'Macroid.icns', 'THIRD_PARTY_NOTICES.md', 'scrcpy-Apache-2.0.txt']
+localized_resources = ['Localizable.strings', 'InfoPlist.strings']
+languages = ['en', 'zh-Hans']
 def uid(value): return hashlib.sha256(value.encode()).hexdigest()[:24].upper()
 def obj(key, body): return f'{uid(key)} = {{ {body} }};'
 def refs(values): return '(' + ', '.join(uid(v) for v in values) + ',)'
@@ -17,6 +19,12 @@ for name in sources:
 for name in resources:
     objects += [obj('res-' + name, f'isa = PBXFileReference; lastKnownFileType = file; path = "{name}"; sourceTree = "<group>";'),
                 obj('build-' + name, f'isa = PBXBuildFile; fileRef = {uid("res-" + name)};')]
+for name in localized_resources:
+    for language in languages:
+        objects.append(obj(f'res-{language}-{name}', f'isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "{language}"; path = "{language}.lproj/{name}"; sourceTree = "<group>";'))
+    objects += [obj('res-' + name, f'isa = PBXVariantGroup; name = "{name}"; sourceTree = "<group>"; children = ' + refs([f'res-{language}-{name}' for language in languages]) + ';'),
+                obj('build-' + name, f'isa = PBXBuildFile; fileRef = {uid("res-" + name)};')]
+resources += localized_resources
 objects += [obj('product', 'isa = PBXFileReference; explicitFileType = wrapper.application; path = Macroid.app; sourceTree = BUILT_PRODUCTS_DIR;'),
             obj('sources', 'isa = PBXGroup; path = Sources; sourceTree = "<group>"; children = ' + refs(['src-' + n for n in sources]) + ';'),
             obj('resources', 'isa = PBXGroup; path = Resources; sourceTree = "<group>"; children = ' + refs(['res-' + n for n in resources]) + ';'),
@@ -34,7 +42,7 @@ for config in ['Debug', 'Release']:
 objects += [obj('project-configs', 'isa = XCConfigurationList; buildConfigurations = ' + refs(['project-Debug', 'project-Release']) + '; defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;'),
             obj('target-configs', 'isa = XCConfigurationList; buildConfigurations = ' + refs(['target-Debug', 'target-Release']) + '; defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;'),
             obj('target', f'isa = PBXNativeTarget; buildConfigurationList = {uid("target-configs")}; buildPhases = {refs(["sources-phase", "frameworks", "resource-phase"])}; buildRules = (); dependencies = (); name = Macroid; productName = Macroid; productReference = {uid("product")}; productType = "com.apple.product-type.application";'),
-            obj('project', f'isa = PBXProject; attributes = {{ LastUpgradeCheck = 2610; }}; buildConfigurationList = {uid("project-configs")}; compatibilityVersion = "Xcode 14.0"; developmentRegion = zh_CN; hasScannedForEncodings = 0; knownRegions = (en, zh_CN, Base); mainGroup = {uid("main")}; productRefGroup = {uid("products")}; projectDirPath = ""; projectRoot = ""; targets = {refs(["target"])};')]
+            obj('project', f'isa = PBXProject; attributes = {{ LastUpgradeCheck = 2610; }}; buildConfigurationList = {uid("project-configs")}; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, "zh-Hans", Base); mainGroup = {uid("main")}; productRefGroup = {uid("products")}; projectDirPath = ""; projectRoot = ""; targets = {refs(["target"])};')]
 project = root / 'Macroid.xcodeproj'
 project.mkdir(exist_ok=True)
 (project / 'project.pbxproj').write_text('// !$*UTF8*$!\n{ archiveVersion = 1; classes = {}; objectVersion = 56; objects = {\n' + '\n'.join(objects) + f'\n}}; rootObject = {uid("project")}; }}\n')

@@ -4,11 +4,11 @@ enum WireError: Error, LocalizedError {
     case malformed, oversized, disconnected, remote(String), timeout
     var errorDescription: String? {
         switch self {
-        case .malformed: return "Macroid 协议数据无效"
-        case .oversized: return "数据超过协议大小限制"
-        case .disconnected: return "设备连接已断开"
-        case .remote(let text): return text
-        case .timeout: return "手机响应超时，请检查连接"
+        case .malformed: return L("Macroid 协议数据无效")
+        case .oversized: return L("数据超过协议大小限制")
+        case .disconnected: return L("设备连接已断开")
+        case .remote(let text): return L10n.message(text)
+        case .timeout: return L("手机响应超时，请检查连接")
         }
     }
 }

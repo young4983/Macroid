@@ -9,6 +9,7 @@ struct PhoneFile: Identifiable {
 }
 
 struct FileBrowser: View {
+    @ObservedObject private var language = LanguageSettings.shared
     @ObservedObject var model: AppModel
     @State private var path = "/sdcard"
     @State private var rootPath = ""
@@ -19,28 +20,28 @@ struct FileBrowser: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("手机文件").font(.title3.weight(.semibold))
+                    Text(L("手机文件")).font(.title3.weight(.semibold))
 
                 }
                 Spacer()
-                Button { pickUpload() } label: { Label("上传", systemImage: "arrow.up.doc") }
+                Button { pickUpload() } label: { Label(L("上传"), systemImage: "arrow.up.doc") }
                     .disabled(model.transferProgress != nil)
             }
             HStack {
-                Button { Task { await load((path as NSString).deletingLastPathComponent) } } label: { Image(systemName: "chevron.up") }.disabled(path == rootPath || loading)
+                Button { Task { await load((path as NSString).deletingLastPathComponent) } } label: { Image(systemName: "chevron.up") }.disabled(path == rootPath || loading).help(L("上一级文件夹")).accessibilityLabel(L("上一级文件夹"))
                 Text(path).font(.system(.callout, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                 Spacer()
-                Button { Task { await load(path) } } label: { Image(systemName: "arrow.clockwise") }.disabled(loading)
+                Button { Task { await load(path) } } label: { Image(systemName: "arrow.clockwise") }.disabled(loading).help(L("刷新文件")).accessibilityLabel(L("刷新文件"))
             }.buttonStyle(.borderless).padding(12).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
             if let progress = model.transferProgress {
                 HStack {
-                    VStack(alignment: .leading, spacing: 6) { Text(model.transferLabel).font(.caption); ProgressView(value: progress) }
-                    Button("取消") { transferTask?.cancel() }
+                    VStack(alignment: .leading, spacing: 6) { Text(L10n.message(model.transferLabel)).font(.caption); ProgressView(value: progress) }
+                    Button(L("取消")) { transferTask?.cancel() }
                 }
             }
             if loading { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
             else if entries.isEmpty {
-                VStack(spacing: 12) { Image(systemName: "folder").font(.system(size: 36)); Text("此文件夹为空") }.foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(spacing: 12) { Image(systemName: "folder").font(.system(size: 36)); Text(L("此文件夹为空")) }.foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -52,7 +53,7 @@ struct FileBrowser: View {
                                     Image(systemName: entry.directory ? "folder.fill" : "doc.fill").font(.system(size: 24)).foregroundStyle(entry.directory ? Color.accentColor : .secondary).frame(width: 34)
                                     Text(entry.name).lineLimit(1).truncationMode(.middle)
                                     Spacer()
-                                    Text(entry.directory ? "文件夹" : ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
+                                    Text(entry.directory ? L("文件夹") : ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
                                     Image(systemName: entry.directory ? "chevron.right" : "arrow.down").foregroundStyle(.tertiary).frame(width: 18)
                                 }.padding(.vertical, 12).padding(.horizontal, 10).contentShape(Rectangle())
                             }.buttonStyle(.plain).disabled(model.transferProgress != nil)

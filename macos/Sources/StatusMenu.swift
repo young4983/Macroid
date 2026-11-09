@@ -4,6 +4,7 @@ import SwiftUI
 
 /// Native macOS menus share the same connection and window state as the main panel.
 struct StatusMenu: View {
+    @ObservedObject private var language = LanguageSettings.shared
     @ObservedObject var model: AppModel
     @Environment(\.openWindow) private var openWindow
     // Session readiness is published by each session, not by the containing dictionary.
@@ -12,24 +13,24 @@ struct StatusMenu: View {
     var body: some View {
         Group {
             if model.disconnecting {
-                Text("正在断开连接…")
+                Text(L("正在断开连接…"))
             } else if model.connecting {
-                Text(model.status)
+                Text(L10n.message(model.status))
             } else if let device = model.connectedDevice {
                 Menu {
-                    Text("通过 \(device.connectionLabel) 连接")
+                    Text(L("通过 %1$@ 连接", device.connectionLabel))
                     Text(device.serial)
                     Divider()
-                    Button("断开连接") { Task { await model.disconnect() } }
+                    Button(L("断开连接")) { Task { await model.disconnect() } }
                 } label: {
                     Label(device.model, systemImage: "checkmark.circle")
                 }
             } else {
-                Text("未连接设备")
-                Menu("连接设备") {
+                Text(L("未连接设备"))
+                Menu(L("连接设备")) {
                     if model.devices.isEmpty {
-                        Text(model.refreshing ? "正在查找设备…" : "未发现设备")
-                        Text("请连接 USB 并允许调试，或添加 Wi-Fi 设备")
+                        Text(model.refreshing ? L("正在查找设备…") : L("未发现设备"))
+                        Text(L("请连接 USB 并允许调试，或添加 Wi-Fi 设备"))
                     }
                     ForEach(model.devices) { device in
                         Button {
@@ -46,7 +47,7 @@ struct StatusMenu: View {
                         }.disabled(!device.available)
                     }
                     Divider()
-                    Button("管理 USB / Wi-Fi 设备…") { model.section = "devices"; showMainPanel() }
+                    Button(L("管理 USB / Wi-Fi 设备…")) { model.section = "devices"; showMainPanel() }
                 }
             }
 
@@ -55,40 +56,40 @@ struct StatusMenu: View {
                     await model.refresh()
                     if model.error != nil { showMainPanel() }
                 }
-            } label: { Label("刷新设备", systemImage: "arrow.clockwise") }
+            } label: { Label(L("刷新设备"), systemImage: "arrow.clockwise") }
                 .disabled(model.refreshing || model.connecting || model.disconnecting)
 
             Divider()
-            Button { showMainPanel() } label: { Label("显示主面板", systemImage: "macwindow") }
+            Button { showMainPanel() } label: { Label(L("显示主面板"), systemImage: "macwindow") }
 
             if model.connected {
-                Button { model.open() } label: { Label("手机屏幕", systemImage: "iphone") }
+                Button { model.open() } label: { Label(L("手机屏幕"), systemImage: "iphone") }
                     .disabled(model.disconnecting)
                 if !model.sessions.isEmpty {
-                    Menu("已打开的窗口") {
+                    Menu(L("已打开的窗口")) {
                         ForEach(model.sessions.values.sorted(by: { $0.id < $1.id })) { session in
                             Button(session.name) { model.showStream(session.id) }
                         }
                     }.disabled(model.disconnecting)
                 }
-                Toggle("关屏使用", isOn: Binding(get: { model.screenOff }, set: { value in
+                Toggle(L("关屏使用"), isOn: Binding(get: { model.screenOff }, set: { value in
                     Task {
                         await model.setScreenOff(value)
                         if model.error != nil { showMainPanel() }
                     }
                 }))
                 .disabled(!model.screenPowerSupported || model.screenPowerBusy || model.disconnecting || !canControlScreen)
-                if !model.screenPowerSupported { Text(model.screenPowerReason) }
+                if !model.screenPowerSupported { Text(L10n.message(model.screenPowerReason)) }
             }
 
             Divider()
-            Button { model.section = "settings"; showMainPanel() } label: { Label("设置与帮助…", systemImage: "gearshape") }
-            Button("关于 Macroid") {
+            Button { model.section = "settings"; showMainPanel() } label: { Label(L("设置与帮助…"), systemImage: "gearshape") }
+            Button(L("关于 Macroid")) {
                 NSApp.activate(ignoringOtherApps: true)
                 NSApp.orderFrontStandardAboutPanel(nil)
             }
             Divider()
-            Button("退出 Macroid") { NSApp.terminate(nil) }.keyboardShortcut("q")
+            Button(L("退出 Macroid")) { NSApp.terminate(nil) }.keyboardShortcut("q")
         }
         .onReceive(Publishers.MergeMany(model.sessions.values.map { $0.objectWillChange })) { _ in sessionRevision &+= 1 }
     }
@@ -103,7 +104,7 @@ struct StatusMenu: View {
         if model.devices.filter({ $0.model == device.model && $0.connectionLabel == device.connectionLabel }).count > 1 {
             title += " · \(device.serial)"
         }
-        if !device.available { title += "（\(device.stateLabel)）" }
+        if !device.available { title = L("%1$@（%2$@）", title, L10n.message(device.stateLabel)) }
         return title
     }
     private func showMainPanel() {

@@ -1,5 +1,7 @@
 # Macroid
 
+English documentation: [README.en.md](README.en.md).
+
 把 Android 应用带进独立的 macOS 窗口。Macroid 使用独立包名和自有通信协议，通过 ADB 连接 Android 设备，不依赖 AndroMeld APK、账号、服务器或私有协议。
 
 > **AI coding（GPT）产物声明**：本项目的代码、文档、构建脚本和测试整理主要由 OpenAI GPT 辅助生成与迭代，随后结合本地编译、模拟器和真机连接结果进行人工复核。它是一个公开的实验性开发项目，使用前请先阅读当前边界与许可说明。
@@ -17,6 +19,7 @@
 - 融合画面跟随 Mac 显示器像素密度，可按应用切换较低分辨率的兼容模式；投屏跟随手机横竖屏，并提供旋转按钮。
 - 每个窗口独立记住置顶状态；支持的设备可关闭手机物理屏幕继续操作，最后一个窗口关闭时恢复。
 - macOS 菜单栏提供单色 Macroid 图标，可连接/断开设备、显示主面板、投屏、切回已有窗口及切换关屏使用。
+- macOS 应用界面支持简体中文和 English，可跟随 Mac 系统语言或在应用内即时切换；Android 键盘名称也跟随手机语言。
 
 ## 下载与安装
 
@@ -70,8 +73,6 @@ macOS 应用使用本地 ad-hoc 签名，没有 Developer ID 签名或 Apple 公
 也可以在“设备 → Wi-Fi 连接”中使用 Android 无线调试的配对码配对设备。无线连接不会自动接管已有 USB 会话，需要先断开后重新选择 Wi-Fi 设备连接。
 
 ## 截图
-
-![macOS 应用页](docs/screenshots/dashboard.png)
 
 ![Android 独立显示测试页](docs/screenshots/android12-independent-app.png)
 

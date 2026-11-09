@@ -93,7 +93,7 @@ struct DeviceResizeEdges: OptionSet {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     private static func diagonalCursor(_ symbol: String) -> NSCursor {
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "调整大小")!
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: L("调整大小"))!
         image.size = NSSize(width: 18, height: 18)
         return NSCursor(image: image, hotSpot: NSPoint(x: 9, y: 9))
     }
@@ -186,13 +186,14 @@ struct WindowDragRegion: NSViewRepresentable {
 }
 
 struct DeviceTrafficLights: View {
+    @ObservedObject private var language = LanguageSettings.shared
     let close: () -> Void, minimize: () -> Void, fit: () -> Void
     @State private var hovering = false
     var body: some View {
         HStack(spacing: WindowChrome.lightSpacing) {
-            light(Color(red: 1, green: 0.37, blue: 0.34), "xmark", "关闭窗口", close)
-            light(Color(red: 1, green: 0.75, blue: 0.19), "minus", "最小化窗口", minimize)
-            light(Color(red: 0.16, green: 0.79, blue: 0.26), "arrow.up.left.and.arrow.down.right", "适合屏幕", fit)
+            light(Color(red: 1, green: 0.37, blue: 0.34), "xmark", L("关闭窗口"), close)
+            light(Color(red: 1, green: 0.75, blue: 0.19), "minus", L("最小化窗口"), minimize)
+            light(Color(red: 0.16, green: 0.79, blue: 0.26), "arrow.up.left.and.arrow.down.right", L("适合屏幕"), fit)
         }.onHover { hovering = $0 }
     }
     private func light(_ color: Color, _ symbol: String, _ title: String, _ action: @escaping () -> Void) -> some View {

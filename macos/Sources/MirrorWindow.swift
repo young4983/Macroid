@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import Combine
 import SwiftUI
 
 @MainActor final class MirrorWindowController: NSWindowController, NSWindowDelegate {
@@ -9,6 +10,7 @@ import SwiftUI
     private var changingSize = false
     private var configured = false
     private var normalScale: CGFloat?
+    private var languageObserver: AnyCancellable?
     private var isFusion: Bool { session.mode == "fusion" }
     private var pinKey: String { "windowPinned-" + (session.package ?? "phone") }
     var requestedGeometry: StreamGeometry {
@@ -37,6 +39,10 @@ import SwiftUI
         window.animationBehavior = .documentWindow
         super.init(window: window)
         window.delegate = self
+        languageObserver = LanguageSettings.shared.$revision.dropFirst().sink { [weak self] _ in
+            guard let self else { return }
+            self.window?.title = self.session.name + " · Macroid"
+        }
         (window as? DeviceWindow)?.fitDevice = { [weak self] in self?.toggleFit() }
         let hosted = NSHostingView(rootView: MirrorRootView(session: session, model: model,
             close: { [weak window] in window?.close() },
@@ -153,6 +159,7 @@ import SwiftUI
 }
 
 struct MirrorRootView: View {
+    @ObservedObject private var language = LanguageSettings.shared
     @ObservedObject var session: MirrorSession
     @ObservedObject var model: AppModel
     let close: () -> Void, minimize: () -> Void, fit: () -> Void
@@ -166,7 +173,7 @@ struct MirrorRootView: View {
                     MirrorLoadingView(session: session, renderer: session.renderer, model: model)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     if let notice = session.notice {
-                        Text(notice).font(.caption).padding(8).background(.regularMaterial).padding(6)
+                        Text(L10n.message(notice)).font(.caption).padding(8).background(.regularMaterial).padding(6)
                     }
                 }
             } else {
@@ -217,7 +224,7 @@ struct MirrorRootView: View {
             .overlay(RoundedRectangle(cornerRadius: screenRadius, style: .continuous).strokeBorder(.white.opacity(0.07), lineWidth: 0.5).allowsHitTesting(false))
             .overlay(alignment: .top) {
                 if let notice = session.notice {
-                    Text(notice).font(.caption).foregroundStyle(.white).padding(8)
+                    Text(L10n.message(notice)).font(.caption).foregroundStyle(.white).padding(8)
                         .background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 8)).padding(8).allowsHitTesting(false)
                 }
             }
@@ -235,6 +242,7 @@ struct MirrorRootView: View {
 
 /// Shared controls live in the native titlebar for fusion and the device toolbar for mirroring.
 private struct MirrorWindowControls: View {
+    @ObservedObject private var language = LanguageSettings.shared
     @ObservedObject var session: MirrorSession
     @ObservedObject var model: AppModel
     let close: () -> Void, fit: () -> Void
@@ -243,56 +251,56 @@ private struct MirrorWindowControls: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            control("chevron.left", "返回 · Esc") { model.key(session, code: 4) }
+            control("chevron.left", L("返回 · Esc")) { model.key(session, code: 4) }
             if session.mode == "mirror", !compact {
-                control("house", "主页") { model.key(session, code: 3) }
-                control("square.stack", "最近任务") { model.key(session, code: 187) }
+                control("house", L("主页")) { model.key(session, code: 3) }
+                control("square.stack", L("最近任务")) { model.key(session, code: 187) }
                 Button { Task { await model.rotate(session) } } label: {
                     Image(systemName: "rotate.right").font(.system(size: 12, weight: .medium)).frame(width: 22, height: 26).contentShape(Rectangle())
-                }.buttonStyle(.plain).help("旋转屏幕 90°").accessibilityLabel("旋转屏幕")
+                }.buttonStyle(.plain).help(L("旋转屏幕 90°")).accessibilityLabel(L("旋转屏幕"))
                     .disabled(!session.acceptsInput || !model.rotationSupported)
             }
-            control(model.imeEnabled ? "keyboard.fill" : "keyboard", "Macroid 键盘") {
+            control(model.imeEnabled ? "keyboard.fill" : "keyboard", L("Macroid 键盘")) {
                 if model.imeEnabled { Task { await model.setIME(false) } } else { showKeyboardHelp = true }
             }
             Menu {
                 if session.mode == "fusion", session.dynamicResize {
-                    Menu("画面清晰度") {
-                        Picker("画面清晰度", selection: Binding(get: { session.quality }, set: { model.setQuality(session, $0) })) {
+                    Menu(L("画面清晰度")) {
+                        Picker(L("画面清晰度"), selection: Binding(get: { session.quality }, set: { model.setQuality(session, $0) })) {
                             ForEach(FusionQuality.allCases, id: \.self) { Text($0.title).tag($0) }
                         }.pickerStyle(.inline)
-                        Text("兼容模式降低画面分辨率，保留界面大小")
+                        Text(L("兼容模式降低画面分辨率，保留界面大小"))
                     }
                     Divider()
                 }
                 if session.mode == "mirror" {
-                    Button("旋转屏幕 90°") { Task { await model.rotate(session) } }.disabled(!session.acceptsInput || !model.rotationSupported)
-                    Button("开启手机自动旋转") { Task { await model.rotate(session, automatic: true) } }
+                    Button(L("旋转屏幕 90°")) { Task { await model.rotate(session) } }.disabled(!session.acceptsInput || !model.rotationSupported)
+                    Button(L("开启手机自动旋转")) { Task { await model.rotate(session, automatic: true) } }
                         .disabled(!session.acceptsInput || !model.rotationSupported)
                     Divider()
                 }
-                Toggle("窗口置顶", isOn: Binding(get: { session.pinned }, set: { model.setPinned(session, $0) }))
-                Toggle("关屏使用", isOn: Binding(get: { model.screenOff }, set: { value in Task { await model.setScreenOff(value) } }))
+                Toggle(L("窗口置顶"), isOn: Binding(get: { session.pinned }, set: { model.setPinned(session, $0) }))
+                Toggle(L("关屏使用"), isOn: Binding(get: { model.screenOff }, set: { value in Task { await model.setScreenOff(value) } }))
                     .disabled(!model.screenPowerSupported || model.screenPowerBusy || !model.sessions.values.contains(where: { $0.ready }))
-                if !model.screenPowerSupported { Text(model.screenPowerReason) }
+                if !model.screenPowerSupported { Text(L10n.message(model.screenPowerReason)) }
                 Divider()
-                Button("适合屏幕", action: fit)
+                Button(L("适合屏幕"), action: fit)
                 Divider()
-                Button("复制 Mac 剪贴板到 Android") { Task { await model.clipboard(toAndroid: true) } }
-                Button("复制 Android 剪贴板到 Mac") { Task { await model.clipboard(toAndroid: false) } }
-                Button("重新连接画面") { model.retryStream(session) }
+                Button(L("复制 Mac 剪贴板到 Android")) { Task { await model.clipboard(toAndroid: true) } }
+                Button(L("复制 Android 剪贴板到 Mac")) { Task { await model.clipboard(toAndroid: false) } }
+                Button(L("重新连接画面")) { model.retryStream(session) }
                 Divider()
-                Text(session.encoding.isEmpty ? "正在连接…" : session.encoding)
+                Text(session.encoding.isEmpty ? L("正在连接…") : session.encoding)
                 Divider()
-                Button("关闭窗口", action: close)
+                Button(L("关闭窗口"), action: close)
             } label: { Image(systemName: "ellipsis").font(.system(size: 14, weight: .medium)).frame(width: 22, height: 26) }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("更多操作").accessibilityLabel("更多操作")
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help(L("更多操作")).accessibilityLabel(L("更多操作"))
         }
-        .alert("启用 Macroid 键盘", isPresented: $showKeyboardHelp) {
-            Button("启用") { Task { await model.setIME(true) } }
-            Button("取消", role: .cancel) { }
+        .alert(L("启用 Macroid 键盘"), isPresented: $showKeyboardHelp) {
+            Button(L("启用")) { Task { await model.setIME(true) } }
+            Button(L("取消"), role: .cancel) { }
         } message: {
-            Text("连接期间将手机输入法切换为 Macroid，以接收 Mac 的中文和其他 Unicode 文字。断开连接时会恢复原输入法。Android 12/13 的输入焦点可能与手机共享。")
+            Text(L("连接期间将手机输入法切换为 Macroid，以接收 Mac 的中文和其他 Unicode 文字。断开连接时会恢复原输入法。Android 12/13 的输入焦点可能与手机共享。"))
         }
     }
 
@@ -303,6 +311,7 @@ private struct MirrorWindowControls: View {
 }
 
 private struct MirrorLoadingView: View {
+    @ObservedObject private var language = LanguageSettings.shared
     @ObservedObject var session: MirrorSession
     @ObservedObject var renderer: VideoRenderer
     @ObservedObject var model: AppModel
@@ -310,18 +319,18 @@ private struct MirrorLoadingView: View {
         if let error = session.error ?? renderer.error {
             VStack(spacing: 16) {
                 Image(systemName: "rectangle.slash").font(.system(size: 32, weight: .light))
-                Text(session.mode == "mirror" ? "无法开始投屏" : "无法打开应用窗口").font(.headline)
-                ScrollView { Text(error).font(.callout).textSelection(.enabled).frame(maxWidth: .infinity) }.frame(maxHeight: 160)
-                Button("重新尝试") { model.retryStream(session) }.buttonStyle(.borderedProminent)
+                Text(session.mode == "mirror" ? L("无法开始投屏") : L("无法打开应用窗口")).font(.headline)
+                ScrollView { Text(L10n.message(error)).font(.callout).textSelection(.enabled).frame(maxWidth: .infinity) }.frame(maxHeight: 160)
+                Button(L("重新尝试")) { model.retryStream(session) }.buttonStyle(.borderedProminent)
                 if session.mode == "fusion" {
-                    Button("投屏手机主屏幕") { model.open() }.buttonStyle(.borderless)
-                    Text("部分应用或手机系统会限制独立窗口。").font(.caption).foregroundStyle(.secondary)
+                    Button(L("投屏手机主屏幕")) { model.open() }.buttonStyle(.borderless)
+                    Text(L("部分应用或手机系统会限制独立窗口。")).font(.caption).foregroundStyle(.secondary)
                 }
             }.multilineTextAlignment(.center).padding(20).frame(maxWidth: 360).foregroundStyle(.white)
         } else if !renderer.hasFrame {
             VStack(spacing: 16) {
                 ProgressView().controlSize(.small)
-                Text(session.mode == "mirror" ? "正在连接手机屏幕…" : "正在打开应用窗口…").font(.callout)
+                Text(session.mode == "mirror" ? L("正在连接手机屏幕…") : L("正在打开应用窗口…")).font(.callout)
             }.foregroundStyle(.white.opacity(0.85)).padding(20)
         }
     }

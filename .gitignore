@@ -18,6 +18,10 @@ local.properties
 
 # Generated macOS bundle resources; build-macos.sh recreates these files.
 macos/Resources/*
+!macos/Resources/en.lproj/
+!macos/Resources/en.lproj/**
+!macos/Resources/zh-Hans.lproj/
+!macos/Resources/zh-Hans.lproj/**
 
 # Test logs, captures and the uncompressed app bundle are local build output.
 artifacts/testing/

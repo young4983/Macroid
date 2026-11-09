@@ -2,7 +2,7 @@ import Foundation
 
 enum FusionQuality: String, CaseIterable {
     case automatic, compatibility
-    var title: String { self == .automatic ? "清晰（匹配屏幕）" : "兼容（较低分辨率）" }
+    var title: String { self == .automatic ? L("清晰（匹配屏幕）") : L("兼容（较低分辨率）") }
     func pixelScale(for backingScale: Double) -> Double { self == .compatibility ? 1.5 : max(1.5, backingScale) }
 }
 

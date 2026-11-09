@@ -84,7 +84,7 @@ import CoreMedia
                     let sizes = [sps.count, pps.count]
                     let status = CMVideoFormatDescriptionCreateFromH264ParameterSets(allocator: kCFAllocatorDefault,
                         parameterSetCount: 2, parameterSetPointers: pointers, parameterSetSizes: sizes, nalUnitHeaderLength: 4, formatDescriptionOut: &format)
-                    if status != noErr { error = "视频格式无效（\(status)）" }
+                    if status != noErr { error = "视频格式无效：\(status)" }
                 }
             }
         }
