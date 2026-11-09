@@ -1,7 +1,18 @@
 import AppKit
 let target = CommandLine.arguments[1]
-let image = NSImage(size: NSSize(width: 1024, height: 1024))
-image.lockFocus()
+// Use a fixed pixel canvas; NSImage.lockFocus() follows the current display's Retina scale.
+let bitmap = CGContext(data: nil, width: 1024, height: 1024, bitsPerComponent: 8, bytesPerRow: 0,
+                       space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+NSGraphicsContext.saveGraphicsState()
+NSGraphicsContext.current = NSGraphicsContext(cgContext: bitmap, flipped: false)
+// Give the icon tile the usual macOS outer padding: 824 px in a 1024 px canvas.
+// Scale all artwork together to preserve the mark's proportions within the tile.
+let artworkTransform = NSAffineTransform()
+artworkTransform.translateX(by: 512, yBy: 512)
+artworkTransform.scale(by: 824.0 / 928.0)
+artworkTransform.translateX(by: -512, yBy: -512)
+artworkTransform.concat()
 let rect = NSRect(x: 48, y: 48, width: 928, height: 928)
 let background = NSBezierPath(roundedRect: rect, xRadius: 214, yRadius: 214)
 background.addClip()
@@ -14,7 +25,6 @@ NSColor.white.withAlphaComponent(0.17).setFill(); NSBezierPath(roundedRect: fron
 NSColor.white.setStroke()
 let front = NSBezierPath(roundedRect: frontRect, xRadius: 44, yRadius: 44); front.lineWidth = 28; front.stroke()
 let title = NSBezierPath(); title.move(to: NSPoint(x: 362, y: 532)); title.line(to: NSPoint(x: 782, y: 532)); title.lineWidth = 15; title.stroke()
-image.unlockFocus()
-var proposed = NSRect(origin: .zero, size: image.size)
-let rep = NSBitmapImageRep(cgImage: image.cgImage(forProposedRect: &proposed, context: nil, hints: nil)!)
+NSGraphicsContext.restoreGraphicsState()
+let rep = NSBitmapImageRep(cgImage: bitmap.makeImage()!)
 try rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: target))
