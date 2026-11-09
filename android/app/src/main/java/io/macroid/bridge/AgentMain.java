@@ -7,6 +7,7 @@ import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
+import android.hardware.display.DisplayManager;
 import android.net.LocalServerSocket;
 import android.net.LocalSocket;
 import android.os.Build;
@@ -33,6 +34,30 @@ public final class AgentMain {
     private final File sharedRoot = new File("/sdcard").getCanonicalFile();
     private final ScreenPower screenPower = new ScreenPower();
     private volatile boolean shuttingDown;
+    private Closeable rotationWatcher;
+    private void scheduleRotation() {
+        if (shuttingDown) return;
+        handler.removeCallbacks(rotationMonitor); handler.postDelayed(rotationMonitor, 80);
+    }
+    private final Runnable rotationMonitor = new Runnable() { @Override public void run() {
+        synchronized (AgentMain.this) {
+            if (shuttingDown) return;
+            for (VideoSession session : sessions.values()) {
+                try { session.refreshMirror(); }
+                catch (Exception e) { System.err.println("Mirror configuration: " + e); }
+            }
+            try { wire.json(platform.rotationInfo().put("event", "device.rotation")); }
+            catch (Exception e) { System.err.println("Rotation state: " + e); }
+        }
+    }};
+    private final DisplayManager.DisplayListener rotationListener = new DisplayManager.DisplayListener() {
+        public void onDisplayAdded(int id) { }
+        public void onDisplayRemoved(int id) { }
+        public void onDisplayChanged(int id) {
+            if (id != 0 || shuttingDown) return;
+            scheduleRotation();
+        }
+    };
     private final Runnable powerMonitor = new Runnable() {
         @Override public void run() {
             if (shuttingDown) return;
@@ -50,7 +75,14 @@ public final class AgentMain {
     private final Map<String, Upload> uploads = new HashMap<>();
     private record Upload(File temporary, File destination, RandomAccessFile handle, long size) {}
 
-    private AgentMain(ShellPlatform platform, Wire wire, Handler handler) throws Exception { this.platform = platform; this.wire = wire; this.handler = handler; handler.postDelayed(powerMonitor, 1000); }
+    private AgentMain(ShellPlatform platform, Wire wire, Handler handler) throws Exception {
+        this.platform = platform; this.wire = wire; this.handler = handler;
+        handler.postDelayed(powerMonitor, 1000);
+        platform.displays.registerDisplayListener(rotationListener, handler);
+        // Some Android versions omit DisplayListener events for 180° turns (unchanged size).
+        try { rotationWatcher = platform.watchRotation(handler, this::scheduleRotation); }
+        catch (Exception e) { System.err.println("Rotation watcher unavailable: " + e); }
+    }
 
     public static void main(String[] args) throws Exception {
         if (args.length != 2 || !args[0].matches("macroid_[a-zA-Z0-9_]+") || args[1].length() < 32) throw new IllegalArgumentException("Invalid launch arguments");
@@ -89,7 +121,7 @@ public final class AgentMain {
         return new JSONObject().put("product", "Macroid").put("protocol", 1).put("version", "0.3.0")
                 .put("agentPid", android.os.Process.myPid()).put("sdk", Build.VERSION.SDK_INT).put("model", Build.MODEL).put("manufacturer", Build.MANUFACTURER)
                 .put("capabilities", new JSONObject().put("fusion", true).put("mirror", true).put("ownFocus", platform.ownFocusAllowed())
-                        .put("resize", true).put("streamConfig", true).put("alwaysUnlocked", platform.alwaysUnlockedAllowed())
+                        .put("resize", true).put("streamConfig", true).put("rotation", true).put("alwaysUnlocked", platform.alwaysUnlockedAllowed())
                         .put("screenPower", platform.screenPowerUnavailableReason().isEmpty()).put("screenPowerReason", platform.screenPowerUnavailableReason())
                         .put("unicodeIME", true).put("files", true).put("audio", false).put("virtualCamera", false).put("maxStreams", 4));
     }
@@ -110,7 +142,7 @@ public final class AgentMain {
     private void reply(JSONObject request, JSONObject result) throws Exception {
         if (request.optLong("id") != 0) wire.json(new JSONObject().put("id", request.getLong("id")).put("ok", true).put("result", result));
     }
-    private JSONObject dispatch(JSONObject request) throws Exception {
+    private synchronized JSONObject dispatch(JSONObject request) throws Exception {
         switch (request.getString("op")) {
             case "ping": return new JSONObject().put("time", System.currentTimeMillis());
             case "device.info": return deviceInfo();
@@ -129,6 +161,15 @@ public final class AgentMain {
             case "stream.resize": {
                 VideoSession session = session(request); platform.cancelGesture(session.displayId);
                 return session.resize(request);
+            }
+            case "stream.rotate": {
+                VideoSession session = session(request);
+                if (!session.supportsRotation()) throw new IOException("旋转需要启用配置事件的手机投屏；融合应用可通过调整窗口宽高改变方向");
+                platform.cancelGesture(0);
+                JSONObject result = platform.rotate(request.optBoolean("automatic", false));
+                handler.removeCallbacks(rotationMonitor); handler.postDelayed(rotationMonitor, 80);
+                wire.json(new JSONObject(result.toString()).put("event", "device.rotation"));
+                return result;
             }
             case "stream.close": {
                 VideoSession session = sessions.remove(request.getInt("stream"));
@@ -194,6 +235,7 @@ public final class AgentMain {
     private VideoSession session(JSONObject request) throws Exception {
         VideoSession session = sessions.get(request.getInt("stream"));
         if (session == null) throw new IOException("Window is closed");
+        if (!session.fusion) session.refreshMirror();
         if (request.has("generation") && request.getInt("generation") != session.generation()) throw new IOException("视频尺寸已改变，请等待新画面");
         return session;
     }
@@ -293,8 +335,10 @@ public final class AgentMain {
     private void discardUpload(String id) {
         Upload upload = uploads.remove(id); if (upload != null) { try { upload.handle.close(); } catch (IOException ignored) { } upload.temporary.delete(); }
     }
-    private void shutdown() {
-        shuttingDown = true; handler.removeCallbacks(powerMonitor); screenPower.close();
+    private synchronized void shutdown() {
+        shuttingDown = true; handler.removeCallbacks(powerMonitor); handler.removeCallbacks(rotationMonitor);
+        platform.displays.unregisterDisplayListener(rotationListener); screenPower.close();
+        if (rotationWatcher != null) try { rotationWatcher.close(); } catch (IOException e) { System.err.println(e); }
         for (VideoSession session : sessions.values()) session.close(); sessions.clear(); restoreIME();
         for (String id : new ArrayList<>(uploads.keySet())) discardUpload(id);
     }

@@ -1,10 +1,31 @@
 import AppKit
 import SwiftUI
 
+/// Match the device toolbar to AppKit's compact titlebar, including native button placement.
+enum WindowChrome {
+    static let toolbarHeight: CGFloat = 38
+    static let horizontalPadding: CGFloat = 11
+    static let lightDiameter: CGFloat = 12
+    static let lightHitWidth: CGFloat = 16
+    static let lightHitHeight: CGFloat = 18
+    static let lightSpacing: CGFloat = 4
+
+    @MainActor static func configure(_ window: NSWindow, showsTitle: Bool) {
+        let toolbar = NSToolbar(identifier: "Macroid-window-toolbar")
+        toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = false
+        window.toolbarStyle = .unifiedCompact
+        window.toolbar = toolbar
+        window.titleVisibility = showsTitle ? .visible : .hidden
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = showsTitle ? .line : .none
+    }
+}
+
 /// The screen and the surrounding device scale together; the Mac toolbar keeps its native size.
 struct DeviceWindowLayout {
     static let margin: CGFloat = 12
-    static let toolbarHeight: CGFloat = 36
+    static let toolbarHeight = WindowChrome.toolbarHeight
     static let toolbarGap: CGFloat = 10
     static let bezel: CGFloat = 8
     static let screenRadius: CGFloat = 29
@@ -82,7 +103,7 @@ struct DeviceResizeEdges: OptionSet {
                       width: layout.body.width * scale, height: layout.body.height * scale)
     }
     private func dragRegionContains(_ point: NSPoint) -> Bool {
-        let rightControls: CGFloat = isMirror ? 147 : 93
+        let rightControls: CGFloat = isMirror ? 174 : 93
         let rect = NSRect(x: DeviceWindowLayout.margin + 70,
                           y: bounds.height - DeviceWindowLayout.margin - DeviceWindowLayout.toolbarHeight,
                           width: max(0, bounds.width - 2 * DeviceWindowLayout.margin - 70 - rightControls),
@@ -168,7 +189,7 @@ struct DeviceTrafficLights: View {
     let close: () -> Void, minimize: () -> Void, fit: () -> Void
     @State private var hovering = false
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: WindowChrome.lightSpacing) {
             light(Color(red: 1, green: 0.37, blue: 0.34), "xmark", "关闭窗口", close)
             light(Color(red: 1, green: 0.75, blue: 0.19), "minus", "最小化窗口", minimize)
             light(Color(red: 0.16, green: 0.79, blue: 0.26), "arrow.up.left.and.arrow.down.right", "适合屏幕", fit)
@@ -179,8 +200,8 @@ struct DeviceTrafficLights: View {
             ZStack {
                 Circle().fill(color).overlay(Circle().strokeBorder(.black.opacity(0.12), lineWidth: 0.5))
                 if hovering { Image(systemName: symbol).font(.system(size: 7, weight: .bold)).foregroundStyle(.black.opacity(0.6)) }
-            }.frame(width: 12, height: 12)
-                .frame(width: 16, height: 18).contentShape(Rectangle())
+            }.frame(width: WindowChrome.lightDiameter, height: WindowChrome.lightDiameter)
+                .frame(width: WindowChrome.lightHitWidth, height: WindowChrome.lightHitHeight).contentShape(Rectangle())
         }.buttonStyle(.plain).help(title).accessibilityLabel(title)
     }
 }

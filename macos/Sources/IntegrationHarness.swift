@@ -30,6 +30,7 @@ import AVFoundation
                 }
                 guard decoded else { throw WireError.remote("Two Mac video display layers did not enter rendering state") }
                 if args.contains("--window-features") { try await verifyWindows(model, output: output, report: &report) }
+                if args.contains("--display-features") { try await verifyDisplayFeatures(model, output: output, report: &report) }
                 if args.contains("--screen-power-test") {
                     await model.setScreenOff(true)
                     guard model.screenOff else { throw WireError.remote(model.error ?? "Screen power toggle failed") }
@@ -71,7 +72,7 @@ import AVFoundation
     }
     private static func verifyWindows(_ model: AppModel, output: URL, report: inout [String: Any]) async throws {
         guard let session = model.sessions.values.first(where: { $0.package == "io.macroid.fixture" }),
-              let window = NSApp.windows.first(where: { $0.title == session.name + " · Macroid" }), session.dynamicResize else {
+              let window = NSApp.windows.first(where: { $0.isVisible && $0.title == session.name + " · Macroid" }), session.dynamicResize else {
             throw WireError.remote("Missing native fusion window")
         }
         guard window.styleMask.contains(.titled), window.standardWindowButton(.closeButton) != nil else {
@@ -89,7 +90,7 @@ import AVFoundation
         var geometries: [[String: Any]] = []
         for (label, size) in [("narrow", NSSize(width: 420, height: 760)), ("wide", NSSize(width: 960, height: 680)), ("narrow-again", NSSize(width: 420, height: 760))] {
             window.setContentSize(size)
-            try await waitForGeometry(session, width: size.width, height: size.height - MirrorWindowController.fusionToolbarHeight)
+            try await waitForGeometry(session, width: size.width, height: size.height)
             geometries.append(["width": session.width, "height": session.height, "density": session.density, "display": session.displayID, "generation": session.generation])
             window.makeKeyAndOrderFront(nil)
             let observer = ADBClient()
@@ -113,7 +114,7 @@ import AVFoundation
             window.setContentSize(NSSize(width: 460 + n * 20, height: 650))
             try await Task.sleep(nanoseconds: 25_000_000)
         }
-        try await waitForGeometry(session, width: 760, height: 610)
+        try await waitForGeometry(session, width: 760, height: 650)
         report["rapidResize"] = true
         let package = session.package!, name = session.name
         let pinnedBefore = UserDefaults.standard.object(forKey: "windowPinned-" + package)
@@ -121,12 +122,12 @@ import AVFoundation
         window.close()
         model.open(AndroidApp(package: package, name: name))
         guard let reopened = model.sessions.values.first(where: { $0.package == package }), reopened.pinned else { throw WireError.remote("Pin preference was not restored") }
-        try await waitForGeometry(reopened, width: 760, height: 610)
+        try await waitForGeometry(reopened, width: 760, height: 650)
         model.setPinned(reopened, originalPin)
         if let pinnedBefore { UserDefaults.standard.set(pinnedBefore, forKey: "windowPinned-" + package) }
         else { UserDefaults.standard.removeObject(forKey: "windowPinned-" + package) }
         report["windowPreferencesRestored"] = true
-        if let restoredWindow = NSApp.windows.first(where: { $0.title == name + " · Macroid" }) { restoredWindow.setContentSize(originalSize) }
+        if let restoredWindow = NSApp.windows.first(where: { $0.isVisible && $0.title == name + " · Macroid" }) { restoredWindow.setContentSize(originalSize) }
     }
     private static func waitForGeometry(_ session: MirrorSession, width: CGFloat, height: CGFloat) async throws {
         for _ in 0..<500 {
@@ -137,6 +138,89 @@ import AVFoundation
             try await Task.sleep(nanoseconds: 40_000_000)
         }
         throw WireError.remote("Resize did not settle: \(session.width)×\(session.height) @ \(session.density), expected \(width)×\(height) dp")
+    }
+    private static func capture(_ window: NSWindow, to url: URL) async throws {
+        window.makeKeyAndOrderFront(nil)
+        try await Task.sleep(nanoseconds: 600_000_000)
+        let process = Process(); process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        process.arguments = ["-x", "-o", "-l", String(window.windowNumber), url.path]
+        try process.run(); process.waitUntilExit()
+        guard process.terminationStatus == 0 else { throw WireError.remote("Window capture failed") }
+    }
+    private static func verifyDisplayFeatures(_ model: AppModel, output: URL, report: inout [String: Any]) async throws {
+        guard let session = model.sessions.values.first(where: { $0.package == "io.macroid.fixture" }),
+              let window = NSApp.windows.first(where: { $0.isVisible && $0.title == session.name + " · Macroid" }),
+              let transport = model.transport, model.rotationSupported else { throw WireError.remote("Missing display feature capability") }
+        let key = "fusionQuality-io.macroid.fixture", originalQuality = UserDefaults.standard.object(forKey: "fusionQuality-io.macroid.fixture")
+        defer {
+            if let originalQuality { UserDefaults.standard.set(originalQuality, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+        window.setContentSize(NSSize(width: 420, height: 400))
+        var configurations: [[String: Any]] = []
+        for quality in [FusionQuality.automatic, .compatibility, .automatic] {
+            model.setQuality(session, quality)
+            try await waitForGeometry(session, width: 420, height: 400)
+            let expected = StreamGeometry(contentWidth: 420, contentHeight: 400, pixelScale: quality.pixelScale(for: Double(window.backingScaleFactor)))
+            guard session.width == expected.width, session.height == expected.height, session.density == expected.density else {
+                throw WireError.remote("Pixel density did not match the selected quality")
+            }
+            let observer = ADBClient()
+            for _ in 0..<100 {
+                let state = try await observer.run(["-s", model.selectedSerial, "shell", "content", "query", "--uri", "content://io.macroid.fixture/state"])
+                if state.range(of: "density=\(session.density)(?:,|$)", options: .regularExpression) != nil { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            // A valid new video frame may still contain the app's old buffer during Activity recreation.
+            try await Task.sleep(nanoseconds: 2_000_000_000)
+            configurations.append(["quality": quality.rawValue, "width": session.width, "height": session.height, "density": session.density])
+            try await capture(window, to: output.appendingPathComponent("fusion-" + quality.rawValue + ".png"))
+        }
+        report["fusionQuality"] = configurations
+        // Release the fusion encoders before exercising mirror configuration on low-capacity devices.
+        for current in Array(model.sessions.values) {
+            NSApp.windows.first(where: { $0.isVisible && $0.title == current.name + " · Macroid" })?.close()
+        }
+        _ = try await transport.request("apps.launch", ["package": "io.macroid.fixture"])
+        let observer = ADBClient(), serial = model.selectedSerial
+        let originalRotation = try await observer.run(["-s", serial, "shell", "wm", "user-rotation"])
+        do {
+            _ = try await observer.run(["-s", serial, "shell", "wm", "user-rotation", "lock", "0"])
+            model.open()
+            guard let mirror = model.sessions.values.first(where: { $0.mode == "mirror" }),
+                  let device = NSApp.windows.first(where: { $0.isVisible && $0.title == mirror.name + " · Macroid" }) else { throw WireError.remote("Missing mirror window") }
+            try await waitForRotation(mirror, window: device, rotation: 0)
+            try await capture(device, to: output.appendingPathComponent("mirror-portrait.png"))
+            await model.rotate(mirror)
+            try await waitForRotation(mirror, window: device, rotation: 1)
+            try await capture(device, to: output.appendingPathComponent("mirror-landscape.png"))
+            await model.rotate(mirror)
+            try await waitForRotation(mirror, window: device, rotation: 0)
+            var rotations: [[String: Any]] = []
+            for rotation in [2, 3, 0] {
+                _ = try await observer.run(["-s", serial, "shell", "wm", "user-rotation", "lock", String(rotation)])
+                try await waitForRotation(mirror, window: device, rotation: rotation)
+                rotations.append(["rotation": rotation, "width": mirror.width, "height": mirror.height, "windowWidth": device.frame.width, "windowHeight": device.frame.height])
+            }
+            await model.rotate(mirror, automatic: true)
+            let mode = try await observer.run(["-s", serial, "shell", "wm", "user-rotation"])
+            guard mode.trimmingCharacters(in: .whitespacesAndNewlines) == "free" else { throw WireError.remote("Automatic rotation did not enable") }
+            report["mirrorRotations"] = rotations; report["automaticRotation"] = true
+        } catch {
+            _ = try? await observer.run(["-s", serial, "shell", "wm", "user-rotation"] + originalRotation.split(whereSeparator: \.isWhitespace).map(String.init))
+            throw error
+        }
+        _ = try await observer.run(["-s", serial, "shell", "wm", "user-rotation"] + originalRotation.split(whereSeparator: \.isWhitespace).map(String.init))
+    }
+    private static func waitForRotation(_ session: MirrorSession, window: NSWindow, rotation: Int) async throws {
+        for _ in 0..<500 {
+            if let error = session.error ?? session.renderer.error { throw WireError.remote(error) }
+            if session.rotation == rotation, session.ready, session.renderer.currentFrameReady,
+               (session.width > session.height) == (rotation % 2 == 1),
+               (window.frame.width > window.frame.height) == (rotation % 2 == 1) { return }
+            try await Task.sleep(nanoseconds: 40_000_000)
+        }
+        throw WireError.remote("Mirror video/window did not follow rotation \(rotation)")
     }
     // Explicit physical-device mirror check: no fixture installation, IME switch or file writes on the phone.
     private static func runMirrorTest(_ args: [String]) {

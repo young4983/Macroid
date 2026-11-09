@@ -14,32 +14,34 @@
 - USB 和 Android 无线调试连接，最多同时打开四个独立应用窗口。
 - H.264 投屏、点击/拖动/滚轮/返回/导航键、中文和 Unicode 输入、文件浏览与分块传输。
 - 融合窗口无手机外壳，可自由调整宽高；应用按 Android 实际 dp 尺寸自行切换布局。
+- 融合画面跟随 Mac 显示器像素密度，可按应用切换较低分辨率的兼容模式；投屏跟随手机横竖屏，并提供旋转按钮。
 - 每个窗口独立记住置顶状态；支持的设备可关闭手机物理屏幕继续操作，最后一个窗口关闭时恢复。
 - macOS 菜单栏提供单色 Macroid 图标，可连接/断开设备、显示主面板、投屏、切回已有窗口及切换关屏使用。
 
 ## 下载与安装
 
-当前版本为 **0.3.0**，对应 Git 标签 [`0.3`](https://github.com/young4983/Macroid/tree/0.3)。需要 macOS 13+、Android 12+；Mac 安装包同时支持 Intel 和 Apple Silicon。
+当前版本为 **0.3.0**。以下为 `main` 分支的最新构建，包含界面更新、融合清晰度和投屏旋转；此前的版本快照见 Git 标签 [`0.3`](https://github.com/young4983/Macroid/tree/0.3)。需要 macOS 13+、Android 12+；Mac 安装包同时支持 Intel 和 Apple Silicon。
 
-- [下载 Macroid 0.3 Mac 安装包](https://github.com/young4983/Macroid/raw/refs/tags/0.3/artifacts/Macroid-macOS-universal.zip)
-- [下载 Android 助手 APK](https://github.com/young4983/Macroid/raw/refs/tags/0.3/artifacts/Macroid.apk)（可选，Mac 应用会自动安装）
-- [SHA256SUMS 校验文件](https://github.com/young4983/Macroid/raw/refs/tags/0.3/artifacts/SHA256SUMS)
+- [下载 Mac DMG 安装文件](https://github.com/young4983/Macroid/raw/refs/heads/main/artifacts/Macroid-macOS-universal.dmg)
+- [下载 Mac ZIP 压缩包](https://github.com/young4983/Macroid/raw/refs/heads/main/artifacts/Macroid-macOS-universal.zip)
+- [下载 Android 助手 APK](https://github.com/young4983/Macroid/raw/refs/heads/main/artifacts/Macroid.apk)（可选，Mac 应用会自动安装）
+- [SHA256SUMS 校验文件](https://github.com/young4983/Macroid/raw/refs/heads/main/artifacts/SHA256SUMS)
 
 ### 首次安装
 
-1. 下载并解压 Mac 安装包，将 `Macroid.app` 拖到“应用程序”文件夹，再从该文件夹打开。
+1. 下载并打开 DMG，将 `Macroid.app` 拖到旁边的 `Applications`（应用程序）文件夹，再从“应用程序”中打开。使用 ZIP 时，先解压再拖入应用程序文件夹。
 2. Mac 安装包已内置 ADB 和 Android 助手，日常使用无需安装 Android Studio 或 Android SDK。
 3. 在手机开发者选项中开启 USB 调试，连接 Mac，并在手机上允许这台电脑调试。
 4. 在主面板或菜单栏中选择设备并连接；Macroid 会安装助手。助手没有桌面图标，无需在手机上手动打开。
 
-如果需要手动安装助手，可以使用 `adb install -r Macroid.apk`。仓库的 [`artifacts/`](artifacts/) 目录也保留应用压缩包、APK 和校验文件。
+如果需要手动安装助手，可以使用 `adb install -r Macroid.apk`。仓库的 [`artifacts/`](artifacts/) 目录保留 DMG、应用压缩包、APK 和校验文件。
 
 macOS 应用使用本地 ad-hoc 签名，没有 Developer ID 签名或 Apple 公证。首次打开时，如果系统提示无法验证开发者，请在 Finder 中右键点击应用并选择“打开”，或到“系统设置 → 隐私与安全性”允许打开。Android APK 使用本地开发密钥签名。
 
 ### 更新已有安装
 
 1. 在旧版 Macroid 菜单栏中选择“退出 Macroid”，或按 `⌘Q`。仅关闭主面板不会退出；正常退出会断开设备并恢复本次会话控制的手机屏幕和输入法。
-2. 下载新版安装包并解压，用新的 `Macroid.app` 替换“应用程序”中的旧版。不要同时运行旧版与新版。
+2. 下载并打开新版 DMG（或解压 ZIP），用新的 `Macroid.app` 替换“应用程序”中的旧版。不要同时运行旧版与新版。
 3. 重新打开“应用程序”中的 Macroid 并连接手机。应用会通过覆盖安装更新内置 Android 助手，通常无需手动卸载助手。
 4. 收藏、融合窗口位置/尺寸、置顶等偏好继续保留；“关屏使用”需要在每次连接后手动开启。可在菜单栏的“关于 Macroid”查看应用版本。
 
@@ -80,6 +82,8 @@ macOS 应用使用本地 ad-hoc 签名，没有 Developer ID 签名或 Apple 公
 | USB / 无线调试 | 设备发现、配对码配对、已配对设备连接和连接方式提示 |
 | 独立应用窗口 | 每个窗口使用独立虚拟显示、H.264 流和输入目标；相同应用复用窗口 |
 | 自适应融合窗口 | 无手机外壳、原生标题栏、自由比例、动态副屏尺寸和视频转场；布局由 Android 应用决定 |
+| 融合清晰度 | 默认匹配显示器像素比例并提高码率；“更多操作 → 画面清晰度”可按应用选择兼容模式，保持界面逻辑大小 |
+| 屏幕旋转 | 投屏随手机方向更新画面和窗口比例；工具栏及“更多操作”提供旋转 90°，可开启手机自动旋转 |
 | 窗口置顶 | 每窗口独立切换，按应用或镜像窗口保存 |
 | 关屏使用 | 物理面板关闭，保留编码和输入；按设备探测、退出恢复，独立守护处理 agent 异常退出 |
 | 多窗口 | 最多四个；实际数量取决于手机编码器和应用限制 |
@@ -111,7 +115,7 @@ Macroid/
 ├── protocol/macroid-v1.md    Macroid Wire v1 协议规范
 ├── scripts/                  构建、打包和集成测试脚本
 ├── docs/                     架构、验证记录和截图
-└── artifacts/                发布 APK、Universal 2 应用压缩包和校验值
+└── artifacts/                发布 APK、Universal 2 DMG / ZIP 和校验值
 ```
 
 ## 从源码构建
@@ -123,7 +127,7 @@ Macroid/
 ./scripts/package.sh
 ```
 
-构建脚本会先编译 Android APK，再把 APK、Universal ADB 和第三方声明放入 Mac 应用，最后构建包含 x86_64 与 arm64 的 `.app` 并进行本地 ad-hoc 签名。构建完成后，`scripts/package.sh` 会更新 `artifacts/Macroid-macOS-universal.zip`、`artifacts/Macroid.apk` 和 `artifacts/SHA256SUMS`。
+构建脚本会先编译 Android APK，再把 APK、Universal ADB 和第三方声明放入 Mac 应用，最后构建包含 x86_64 与 arm64 的 `.app` 并进行本地 ad-hoc 签名。构建完成后，`scripts/package.sh` 会验证应用签名和内置 APK 一致性，生成 `artifacts/Macroid-macOS-universal.dmg`（含应用和 Applications 快捷入口）、ZIP 压缩包及本地源码归档，并更新 APK、DMG 和 ZIP 的 `artifacts/SHA256SUMS`。
 
 也可以分别运行：
 

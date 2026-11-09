@@ -33,9 +33,22 @@ final class WireTests: XCTestCase {
         let invalid = StreamGeometry(contentWidth: .nan, contentHeight: -.infinity)
         XCTAssertEqual(invalid, phone)
         let tiny = StreamGeometry(contentWidth: 10, contentHeight: 10)
-        XCTAssertEqual(tiny.width, 480); XCTAssertEqual(tiny.height, 360)
+        XCTAssertEqual(tiny.width, 640); XCTAssertEqual(tiny.height, 480)
         let huge = StreamGeometry(contentWidth: 10000, contentHeight: 10000)
         XCTAssertLessThanOrEqual(huge.width, 8192); XCTAssertEqual(huge.width % 2, 0)
+    }
+    func testRetinaPixelsAndCompatibilityPreserveTheSameLogicalLayout() {
+        let retina = StreamGeometry(contentWidth: 420, contentHeight: 720, pixelScale: 2)
+        let compatible = StreamGeometry(contentWidth: 420, contentHeight: 720, pixelScale: 1.5)
+        XCTAssertEqual(retina.width, 840); XCTAssertEqual(retina.height, 1440); XCTAssertEqual(retina.density, 320)
+        XCTAssertEqual(compatible.width, 630); XCTAssertEqual(compatible.height, 1080); XCTAssertEqual(compatible.density, 240)
+        for geometry in [retina, compatible] {
+            XCTAssertEqual(geometry.width * 160 / geometry.density, 420)
+            XCTAssertEqual(geometry.height * 160 / geometry.density, 720)
+        }
+        XCTAssertEqual(FusionQuality.automatic.pixelScale(for: 2), 2)
+        XCTAssertEqual(FusionQuality.compatibility.pixelScale(for: 2), 1.5)
+        XCTAssertEqual(StreamGeometry(contentWidth: 420, contentHeight: 720, pixelScale: .nan), retina)
     }
     func testConfigurationBoundarySurvivesFragmentation() throws {
         let packets = [

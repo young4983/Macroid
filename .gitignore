@@ -28,4 +28,5 @@ artifacts/Macroid-source.zip
 !artifacts/
 !artifacts/Macroid.apk
 !artifacts/Macroid-macOS-universal.zip
+!artifacts/Macroid-macOS-universal.dmg
 !artifacts/SHA256SUMS

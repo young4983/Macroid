@@ -11,6 +11,9 @@ import android.hardware.display.VirtualDisplayConfig;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.Binder;
+import android.os.Parcel;
+import android.os.RemoteException;
 import android.graphics.Rect;
 import android.view.*;
 import java.io.*;
@@ -28,6 +31,92 @@ final class ShellPlatform {
     private final Object input;
     private final Method inject, setDisplay;
     private final Map<Integer, Long> gestures = new HashMap<>();
+
+    static final class ScreenInfo {
+        final int width, height, density, rotation;
+        ScreenInfo(Display display, int rotation) {
+            android.util.DisplayMetrics metrics = new android.util.DisplayMetrics(); display.getRealMetrics(metrics);
+            width = metrics.widthPixels; height = metrics.heightPixels; density = metrics.densityDpi; this.rotation = rotation;
+        }
+        boolean sameAs(ScreenInfo other) {
+            return other != null && width == other.width && height == other.height && density == other.density && rotation == other.rotation;
+        }
+    }
+    ScreenInfo screenInfo() throws Exception {
+        Display display = displays.getDisplay(Display.DEFAULT_DISPLAY);
+        if (display == null) throw new IOException("手机主屏幕不可用");
+        Object wm = windowManager();
+        int rotation = (int)wm.getClass().getMethod("getDefaultDisplayRotation").invoke(wm);
+        return new ScreenInfo(display, rotation);
+    }
+
+    private Object windowManager() throws Exception {
+        return Class.forName("android.view.WindowManagerGlobal").getMethod("getWindowManagerService").invoke(null);
+    }
+    // This listener runs only in the uid-2000 app_process agent, outside APK hidden-API enforcement.
+    @SuppressLint("SoonBlockedPrivateApi")
+    Closeable watchRotation(Handler handler, Runnable changed) throws Exception {
+        Class<?> watcherType = Class.forName("android.view.IRotationWatcher");
+        Class<?> stub = Class.forName("android.view.IRotationWatcher$Stub");
+        Field transaction = stub.getDeclaredField("TRANSACTION_onRotationChanged"); transaction.setAccessible(true);
+        int rotationTransaction = transaction.getInt(null);
+        Binder binder = new Binder() {
+            @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
+                if (code == IBinder.INTERFACE_TRANSACTION) {
+                    if (reply != null) reply.writeString("android.view.IRotationWatcher");
+                    return true;
+                }
+                if (code == rotationTransaction) {
+                    data.enforceInterface("android.view.IRotationWatcher"); data.readInt();
+                    handler.post(changed); return true;
+                }
+                return super.onTransact(code, data, reply, flags);
+            }
+        };
+        Object watcher = stub.getMethod("asInterface", IBinder.class).invoke(null, binder);
+        Object wm = windowManager();
+        wm.getClass().getMethod("watchRotation", watcherType, int.class).invoke(wm, watcher, 0);
+        return () -> {
+            try { wm.getClass().getMethod("removeRotationWatcher", watcherType).invoke(wm, watcher); }
+            catch (Exception e) { throw new IOException("Remove rotation watcher", e); }
+        };
+    }
+    boolean rotationLocked() throws Exception {
+        Object wm = windowManager();
+        try { return (boolean)wm.getClass().getMethod("isDisplayRotationFrozen", int.class).invoke(wm, 0); }
+        catch (NoSuchMethodException e) { return (boolean)wm.getClass().getMethod("isRotationFrozen").invoke(wm); }
+    }
+    private void freezeRotation(int rotation) throws Exception {
+        Object wm = windowManager();
+        try { wm.getClass().getMethod("freezeDisplayRotation", int.class, int.class, String.class).invoke(wm, 0, rotation, "Macroid"); }
+        catch (NoSuchMethodException e) {
+            try { wm.getClass().getMethod("freezeDisplayRotation", int.class, int.class).invoke(wm, 0, rotation); }
+            catch (NoSuchMethodException older) { wm.getClass().getMethod("freezeRotation", int.class).invoke(wm, rotation); }
+        }
+    }
+    private void thawRotation() throws Exception {
+        Object wm = windowManager();
+        try { wm.getClass().getMethod("thawDisplayRotation", int.class, String.class).invoke(wm, 0, "Macroid"); }
+        catch (NoSuchMethodException e) {
+            try { wm.getClass().getMethod("thawDisplayRotation", int.class).invoke(wm, 0); }
+            catch (NoSuchMethodException older) { wm.getClass().getMethod("thawRotation").invoke(wm); }
+        }
+    }
+    org.json.JSONObject rotationInfo() throws Exception {
+        return new org.json.JSONObject().put("rotation", screenInfo().rotation).put("rotationLocked", rotationLocked());
+    }
+    org.json.JSONObject rotate(boolean automatic) throws Exception {
+        int target = -1;
+        if (automatic) { thawRotation(); }
+        else {
+            boolean locked = rotationLocked();
+            // Toggle each portrait/landscape pair; many phone policies disallow upside-down portrait.
+            target = screenInfo().rotation ^ 1;
+            try { freezeRotation(target); }
+            finally { if (!locked) thawRotation(); }
+        }
+        return rotationInfo().put("requestedRotation", target);
+    }
 
     ShellPlatform() throws Exception {
         Class<?> thread = Class.forName("android.app.ActivityThread");
@@ -136,16 +225,27 @@ final class ShellPlatform {
         IBinder token = (IBinder) control.getDeclaredMethod("createDisplay", String.class, boolean.class).invoke(null, name, false);
         DisplayHandle handle = new DisplayHandle(token);
         try {
-            android.util.DisplayMetrics metrics = new android.util.DisplayMetrics(); displays.getDisplay(0).getRealMetrics(metrics);
-            control.getDeclaredMethod("openTransaction").invoke(null);
-            try {
-                control.getDeclaredMethod("setDisplaySurface", IBinder.class, Surface.class).invoke(null, token, surface);
-                control.getDeclaredMethod("setDisplayProjection", IBinder.class, int.class, Rect.class, Rect.class)
-                        .invoke(null, token, 0, new Rect(0, 0, metrics.widthPixels, metrics.heightPixels), new Rect(0, 0, width, height));
-                control.getDeclaredMethod("setDisplayLayerStack", IBinder.class, int.class).invoke(null, token, 0);
-            } finally { control.getDeclaredMethod("closeTransaction").invoke(null); }
+            updateDisplay(handle, width, height, 0, surface);
             return handle;
         } catch (Exception e) { handle.release(); throw e; }
+    }
+
+    void updateDisplay(DisplayHandle display, int width, int height, int density, Surface surface) throws Exception {
+        if (display.virtual != null) {
+            display.virtual.resize(width, height, density);
+            display.virtual.setSurface(surface);
+            return;
+        }
+        ScreenInfo info = screenInfo();
+        Class<?> control = Class.forName("android.view.SurfaceControl");
+        control.getDeclaredMethod("openTransaction").invoke(null);
+        try {
+            control.getDeclaredMethod("setDisplaySurface", IBinder.class, Surface.class).invoke(null, display.token, surface);
+            // Layer-stack content already uses the current logical orientation.
+            control.getDeclaredMethod("setDisplayProjection", IBinder.class, int.class, Rect.class, Rect.class)
+                    .invoke(null, display.token, 0, new Rect(0, 0, info.width, info.height), new Rect(0, 0, width, height));
+            control.getDeclaredMethod("setDisplayLayerStack", IBinder.class, int.class).invoke(null, display.token, 0);
+        } finally { control.getDeclaredMethod("closeTransaction").invoke(null); }
     }
 
     DisplayHandle createDisplay(String name, int width, int height, int density, Surface surface, boolean fusion, Handler handler) throws Exception {

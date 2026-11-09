@@ -6,7 +6,6 @@ import android.media.MediaFormat;
 import android.media.MediaCodecList;
 import android.os.SystemClock;
 import android.os.Handler;
-import android.util.DisplayMetrics;
 import android.view.Surface;
 import org.json.JSONObject;
 import java.io.Closeable;
@@ -21,9 +20,12 @@ final class VideoSession implements Closeable {
     volatile int width, height, density;
     final boolean fusion;
     private final Wire wire;
+    private final ShellPlatform platform;
+    private final Handler handler;
+    private ShellPlatform.ScreenInfo mirrorSource;
     interface EncoderFactory { Configured create(int width, int height, JSONObject options) throws IOException; }
     private final EncoderFactory encoderFactory;
-    private final ShellPlatform.DisplayHandle display;
+    private ShellPlatform.DisplayHandle display;
     private final JSONObject options;
     private final boolean configEvents;
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -60,16 +62,16 @@ final class VideoSession implements Closeable {
     // Package-local injection supports real-device failure/recovery tests without a wire backdoor.
     VideoSession(int id, JSONObject request, ShellPlatform platform, Wire wire, Handler handler, EncoderFactory encoderFactory) throws Exception {
         this.encoderFactory = encoderFactory;
-        this.id = id; this.wire = wire; options = new JSONObject(request.toString());
+        this.id = id; this.wire = wire; this.platform = platform; this.handler = handler; options = new JSONObject(request.toString());
         fusion = !"mirror".equals(request.optString("mode", "fusion"));
         configEvents = request.optBoolean("configEvents", false);
         int w = bounded(request.optInt("width", 720), 320, 8192), h = bounded(request.optInt("height", 1280), 320, 8192);
         int dpi = bounded(request.optInt("density", 240), 40, 640);
         if (!fusion) {
-            DisplayMetrics metrics = new DisplayMetrics(); platform.displays.getDisplay(0).getRealMetrics(metrics);
-            float scale = Math.min(1f, 1920f / Math.max(metrics.widthPixels, metrics.heightPixels));
-            w = Math.max(2, ((int)(metrics.widthPixels * scale)) & ~1);
-            h = Math.max(2, ((int)(metrics.heightPixels * scale)) & ~1); dpi = metrics.densityDpi;
+            mirrorSource = platform.screenInfo();
+            double scale = Math.min(1d, 1920d / Math.max(mirrorSource.width, mirrorSource.height));
+            w = Math.max(2, ((int)(mirrorSource.width * scale)) & ~1);
+            h = Math.max(2, ((int)(mirrorSource.height * scale)) & ~1); dpi = mirrorSource.density;
         }
         Configured config = encoderFactory.create(w, h, options);
         adopt(config, w, h, dpi);
@@ -108,7 +110,9 @@ final class VideoSession implements Closeable {
             if (!surfaceSupported) continue;
             MediaCodecInfo.VideoCapabilities video = caps.getVideoCapabilities();
             Set<String> tried = new HashSet<>();
-            int[] edges = info.isSoftwareOnly() ? new int[]{960, 720} : new int[]{1920, 1920, 1280};
+            int maxSize = bounded(request.optInt("maxSize", 1920), 720, 4096);
+            int[] edges = info.isSoftwareOnly() ? new int[]{Math.min(maxSize, 960), Math.min(maxSize, 720)}
+                    : new int[]{maxSize, maxSize, Math.min(maxSize, 1920), Math.min(maxSize, 1280)};
             for (int attempt = 0; attempt < edges.length; attempt++) {
                 int targetFPS = info.isSoftwareOnly() ? 24 : (attempt == 0 ? bounded(request.optInt("fps", 60), 15, 60) : 30);
                 double scale = Math.min(1d, Math.min((double)edges[attempt] / Math.max(requestedWidth, requestedHeight),
@@ -151,12 +155,15 @@ final class VideoSession implements Closeable {
 
     JSONObject info() throws Exception {
         Configured config = run.config;
-        return new JSONObject().put("stream", id).put("display", displayId).put("width", width)
+        JSONObject result = new JSONObject().put("stream", id).put("display", displayId).put("width", width)
                 .put("height", height).put("density", density).put("generation", generation)
                 .put("encoder", config.name).put("fps", config.fps).put("codec", "h264")
                 .put("mode", fusion ? "fusion" : "mirror");
+        if (!fusion) result.put("rotation", mirrorSource.rotation).put("rotationLocked", platform.rotationLocked());
+        return result;
     }
     int generation() { return generation; }
+    boolean supportsRotation() { return !fusion && configEvents; }
     boolean isOpen() { return !closed.get(); }
     boolean isActive() { return !closed.get() && run.running.get() && run.hasPicture; }
 
@@ -191,12 +198,36 @@ final class VideoSession implements Closeable {
         start();
         return info();
     }
+    void refreshMirror() throws Exception {
+        if (fusion || !configEvents || closed.get()) return;
+        ShellPlatform.ScreenInfo latest = platform.screenInfo();
+        if (latest.sameAs(mirrorSource)) return;
+        platform.cancelGesture(displayId);
+        double scale = Math.min(1d, 1920d / Math.max(latest.width, latest.height));
+        int w = Math.max(2, ((int)(latest.width * scale)) & ~1);
+        int h = Math.max(2, ((int)(latest.height * scale)) & ~1);
+        stopEncoder();
+        generation++;
+        try {
+            replace(w, h, latest.density);
+            mirrorSource = latest;
+            start();
+        } catch (Exception failure) {
+            close();
+            wire.json(new JSONObject().put("event", "stream.error").put("stream", id).put("message", "旋转后无法恢复画面，请重新连接：" + failure));
+            throw failure;
+        }
+    }
     private void replace(int w, int h, int dpi) throws Exception {
         Configured config = encoderFactory.create(w, h, options);
         try {
             adopt(config, w, h, dpi);
-            display.virtual.resize(width, height, density);
-            display.virtual.setSurface(config.surface);
+            if (!fusion && display.virtual != null) {
+                // Android's mirror root may retain the abandoned encoder queue after repeated
+                // setSurface calls. A capture display owns no app tasks, so recreate it safely.
+                display.release();
+                display = platform.createDisplay("Macroid " + id, width, height, density, config.surface, false, handler);
+            } else { platform.updateDisplay(display, width, height, density, config.surface); }
         } catch (Exception e) { config.release(); run.running.set(false); throw e; }
     }
     private void stopEncoder() throws IOException {

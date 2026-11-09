@@ -15,8 +15,12 @@ struct AndroidApp: Identifiable {
     @Published var ready = false
     @Published var resizing = false
     @Published var pinned = false
+    @Published var quality: FusionQuality = .automatic
+    @Published var rotating = false
+    @Published var rotationLocked = false
     @Published var notice: String?
     var generation = 0
+    var rotation = 0
     var displayID = 0
     var density = 240
     var pendingGeometry: StreamGeometry?
@@ -25,17 +29,23 @@ struct AndroidApp: Identifiable {
     var resizeTaskID = UUID()
     var lastResizeTime: TimeInterval = 0
     var cancelPointer: (() -> Void)?
-    var acceptsInput: Bool { ready && !resizing && error == nil && renderer.error == nil }
+    var acceptsInput: Bool { ready && !resizing && !rotating && error == nil && renderer.error == nil }
     @Published var encoding = ""
     @Published var error: String?
     init(id: UInt32, name: String, package: String?, mode: String, dynamicResize: Bool = false) {
         self.id = id; self.name = name; self.package = package; self.mode = mode; self.dynamicResize = dynamicResize
+        if let package, let stored = UserDefaults.standard.string(forKey: "fusionQuality-" + package), let value = FusionQuality(rawValue: stored) { quality = value }
     }
     func apply(_ info: [String: Any]) {
         width = info["width"] as? Int ?? width; height = info["height"] as? Int ?? height
         density = info["density"] as? Int ?? density; displayID = info["display"] as? Int ?? displayID
         generation = info["generation"] as? Int ?? generation
+        applyRotation(info)
         encoding = "\(width) × \(height) · \(info["fps"] as? Int ?? 30) fps · \(info["encoder"] as? String ?? "H.264")"
+    }
+    func applyRotation(_ info: [String: Any]) {
+        rotation = info["rotation"] as? Int ?? rotation
+        rotationLocked = info["rotationLocked"] as? Bool ?? rotationLocked
     }
 }
 
@@ -59,6 +69,7 @@ struct AndroidApp: Identifiable {
     @Published var screenPowerReason = "设备未连接"
     private(set) var resizeSupported = false
     private(set) var configSupported = false
+    private(set) var rotationSupported = false
     private var connectionID = UUID()
     @Published var search = ""
     @Published var section = "apps"
@@ -117,6 +128,7 @@ struct AndroidApp: Identifiable {
             let ownFocus = capabilities["ownFocus"] as? Bool ?? false
             configSupported = capabilities["streamConfig"] as? Bool ?? false
             resizeSupported = configSupported && capabilities["resize"] as? Bool == true
+            rotationSupported = configSupported && capabilities["rotation"] as? Bool == true
             screenPowerSupported = capabilities["screenPower"] as? Bool ?? false
             screenPowerReason = capabilities["screenPowerReason"] as? String ?? "手机助手不支持关屏使用"
             connectedDevice = device; status = ownFocus ? "已连接 · 独立焦点" : (sdk < 34 ? "已连接 · Android 12/13 兼容模式" : "已连接 · 兼容显示模式")
@@ -135,7 +147,7 @@ struct AndroidApp: Identifiable {
         for session in sessions.values { session.renderer.reset() }; sessions.removeAll()
         connectionID = UUID(); transport?.close(); transport = nil
         screenOff = false; screenPowerBusy = false; screenPowerSupported = false
-        resizeSupported = false; configSupported = false; screenPowerReason = "设备未连接"
+        resizeSupported = false; configSupported = false; rotationSupported = false; screenPowerReason = "设备未连接"
         await adb.stop()
         connectedDevice = nil; apps = []; icons = [:]; status = "等待连接"; sdk = 0; transferProgress = nil
         disconnecting = false
@@ -192,6 +204,7 @@ struct AndroidApp: Identifiable {
         Task {
             do {
                 var request: [String: Any] = ["stream": session.id, "mode": session.mode, "width": 720, "height": 1280, "density": 240, "fps": 60, "bitrate": 6_000_000]
+                if session.mode == "fusion" { request["bitrate"] = 12_000_000; request["maxSize"] = 4096 }
                 if let package = session.package { request["package"] = package }
                 if self.configSupported { request["configEvents"] = true }
                 if session.dynamicResize {
@@ -224,6 +237,9 @@ struct AndroidApp: Identifiable {
         case "stream.config":
             guard let number = event["stream"] as? NSNumber, let session = sessions[number.uint32Value] else { return }
             session.cancelPointer?(); session.ready = false; session.apply(event); session.renderer.beginConfiguration()
+            if session.mode == "mirror" { windows[session.id]?.updateAspect() }
+        case "device.rotation":
+            for session in sessions.values where session.mode == "mirror" { session.applyRotation(event) }
         case "device.screenPower":
             screenOff = event["screenOff"] as? Bool ?? false
         case "stream.error":
@@ -281,6 +297,36 @@ struct AndroidApp: Identifiable {
         }
     }
     func setPinned(_ session: MirrorSession, _ value: Bool) { windows[session.id]?.setPinned(value) }
+    func setQuality(_ session: MirrorSession, _ quality: FusionQuality) {
+        guard session.dynamicResize, let controller = windows[session.id] else { return }
+        session.quality = quality
+        if let package = session.package { UserDefaults.standard.set(quality.rawValue, forKey: "fusionQuality-" + package) }
+        resize(session, to: controller.requestedGeometry)
+    }
+    func rotate(_ session: MirrorSession, automatic: Bool = false) async {
+        guard session.mode == "mirror", rotationSupported, session.acceptsInput, let transport else { return }
+        session.cancelPointer?(); session.rotating = true
+        defer { session.rotating = false }
+        do {
+            let generation = session.generation
+            let result = try await transport.request("stream.rotate", ["stream": session.id, "automatic": automatic])
+            guard sessions[session.id] === session else { return }
+            session.applyRotation(result)
+            session.notice = nil
+            if !automatic, let target = result["requestedRotation"] as? Int {
+                let deadline = ProcessInfo.processInfo.systemUptime + 6
+                while session.rotation != target || session.generation <= generation || !session.ready {
+                    guard sessions[session.id] === session else { return }
+                    if let error = session.error ?? session.renderer.error { throw WireError.remote(error) }
+                    if ProcessInfo.processInfo.systemUptime >= deadline {
+                        session.notice = "当前应用或手机系统未允许切换方向，可尝试开启手机自动旋转。"
+                        break
+                    }
+                    try await Task.sleep(nanoseconds: 40_000_000)
+                }
+            }
+        } catch { session.notice = error.localizedDescription }
+    }
     func setScreenOff(_ value: Bool) async {
         guard !screenPowerBusy, let transport, screenPowerSupported else { return }
         screenPowerBusy = true

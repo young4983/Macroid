@@ -19,7 +19,10 @@ parser.add_argument('--serial', required=True)
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--allow-device', action='store_true')
 parser.add_argument('--screen-power', action='store_true', help='Temporarily turn off physical panels and test cleanup')
+parser.add_argument('--rotation', action='store_true', help='Test mirror rotation and Retina fusion sizes; restores the original rotation mode')
+parser.add_argument('--rotation-only', action='store_true', help='Run only mirror rotation checks')
 args = parser.parse_args()
+if args.rotation_only: args.rotation = True
 if not args.serial.startswith('emulator-') and not args.allow_device:
     parser.error('Physical tests require --allow-device')
 args.output.mkdir(parents=True, exist_ok=True)
@@ -66,6 +69,7 @@ class Client:
         self.key = {}
         self.parameters = {}
         self.events = []
+        self.video = {}
     def exact(self, n):
         result = bytearray()
         while len(result) < n:
@@ -86,6 +90,8 @@ class Client:
             if not flags & 1:
                 assert self.key.get(stream), 'new configuration did not start at a keyframe'
                 self.pictures[stream] = self.pictures.get(stream, 0) + 1
+            if args.rotation:
+                self.video.setdefault((stream, self.config[stream]['generation']), bytearray()).extend(payload[8:])
             return None
         value = json.loads(payload)
         if value.get('event') == 'stream.config':
@@ -109,6 +115,12 @@ class Client:
         deadline = time.monotonic() + 20
         while self.pictures.get(stream, 0) < count and time.monotonic() < deadline: self.read()
         assert self.pictures.get(stream, 0) >= count
+    def configuration(self, stream, predicate):
+        deadline = time.monotonic() + 20
+        while not predicate(self.config.get(stream, {})) and time.monotonic() < deadline: self.read()
+        assert predicate(self.config.get(stream, {})), self.config.get(stream)
+        self.frames(stream)
+        return self.config[stream]
     def reject(self, op, **values):
         try: self.request(op, **values)
         except RuntimeError: return
@@ -135,6 +147,7 @@ def start(label):
     return client, client.request('hello', token=token)
 
 client = None
+original_rotation = run('shell', 'wm', 'user-rotation') if args.rotation else None
 try:
     run('install', '-r', str(ROOT / 'android/app/build/outputs/apk/debug/app-debug.apk'))
     run('install', '-r', str(ROOT / 'android/fixture/build/outputs/apk/debug/fixture-debug.apk'))
@@ -144,52 +157,92 @@ try:
     report['device'] = info
     assert info['capabilities']['resize'] and info['capabilities']['streamConfig']
     client.reject('device.screenPower', screenOff=True)
-    initial = client.request('stream.open', stream=1, mode='fusion', package='io.macroid.fixture',
-                             width=630, height=1080, density=240, configEvents=True)
-    client.frames(1)
-    wait(lambda: state().get('display') == initial['display'])
-    client.tap(1)
-    original = state()
-    for w, h in [(1440, 960), (630, 1080), (3200, 1800), (720, 1280), (1400, 900), (630, 1080)]:
-        updated = client.request('stream.resize', stream=1, width=w, height=h, density=240)
-        assert updated['display'] == initial['display']
+    if not args.rotation_only:
+        initial = client.request('stream.open', stream=1, mode='fusion', package='io.macroid.fixture',
+                                 width=630, height=1080, density=240, configEvents=True)
         client.frames(1)
-        wait(lambda: state().get('width') == updated['width'] and state().get('height') == updated['height'])
-        fixture = state()
-        assert fixture['task'] == original['task'] and fixture['clicks'] == original['clicks']
-        assert abs(fixture['widthDp'] - w/1.5) < max(5, w/1.5*.02), fixture
-        assert fixture['insetTop'] == 0 and fixture['insetBottom'] == 0, fixture
-        assert fixture['statusVisible'] == 0 and fixture['navigationVisible'] == 0, fixture
-        report['configurations'].append(dict(request=[w,h,240], result=updated, fixture=fixture))
-    passed('narrow/wide/narrow and encoder downscale preserve dp, display, task and state; system bars absent')
-    client.tap(1)
-    client.reject('input.key', stream=1, generation=1, code=4)
-    client.reject('stream.resize', stream=1, width=0, height=720, density=240)
-    client.request('stream.sync', stream=1); client.frames(1)
-    client.tap(1)
-    passed('input uses current geometry; stale generations and invalid sizes rejected without losing stream')
-    second = client.request('stream.open', stream=2, mode='fusion', package='com.android.settings', configEvents=True)
-    client.frames(2)
-    assert second['display'] != initial['display']
-    client.request('stream.resize', stream=1, width=1200, height=900, density=240); client.frames(1)
-    client.request('stream.close', stream=2)
-    passed('resize with a second independent encoder')
-    if args.screen_power:
-        assert info['capabilities']['screenPower'], info
-        client.request('device.screenPower', screenOff=True)
-        wait(lambda: panel_is(False)); client.tap(1)
-        before = client.pictures[1]; client.frames(1, before+5)
-        client.request('device.screenPower', screenOff=False)
-        wait(lambda: panel_is(True))
-        passed('fusion remains interactive and produces video while physical panel is off')
-    resize_id = client.send('stream.resize', stream=1, width=630, height=1080, density=240)
-    close_id = client.send('stream.close', stream=1)
-    client.response(resize_id); client.response(close_id)
-    passed('close queued during resize releases the stream')
+        wait(lambda: state().get('display') == initial['display'])
+        client.tap(1)
+        original = state()
+        for w, h in [(1440, 960), (630, 1080), (3200, 1800), (720, 1280), (1400, 900), (630, 1080)]:
+            updated = client.request('stream.resize', stream=1, width=w, height=h, density=240)
+            assert updated['display'] == initial['display']
+            client.frames(1)
+            wait(lambda: state().get('width') == updated['width'] and state().get('height') == updated['height'])
+            fixture = state()
+            assert fixture['task'] == original['task'] and fixture['clicks'] == original['clicks']
+            assert abs(fixture['widthDp'] - w/1.5) < max(5, w/1.5*.02), fixture
+            assert fixture['insetTop'] == 0 and fixture['insetBottom'] == 0, fixture
+            assert fixture['statusVisible'] == 0 and fixture['navigationVisible'] == 0, fixture
+            report['configurations'].append(dict(request=[w,h,240], result=updated, fixture=fixture))
+        passed('narrow/wide/narrow and encoder downscale preserve dp, display, task and state; system bars absent')
+        client.tap(1)
+        client.reject('input.key', stream=1, generation=1, code=4)
+        client.reject('stream.resize', stream=1, width=0, height=720, density=240)
+        client.request('stream.sync', stream=1); client.frames(1)
+        client.tap(1)
+        passed('input uses current geometry; stale generations and invalid sizes rejected without losing stream')
+        if args.rotation:
+            for width, height, density in [(840, 800, 320), (630, 600, 240)]:
+                updated = client.request('stream.resize', stream=1, width=width, height=height, density=density)
+                client.frames(1)
+                wait(lambda: abs(state().get('widthDp', 0) - 420) < 4 and abs(state().get('heightDp', 0) - 400) < 4)
+                assert updated['width'] == width and updated['height'] == height, updated
+                client.tap(1)
+                report['configurations'].append(dict(quality='retina' if density == 320 else 'compatibility', result=updated))
+            passed('Retina and compatibility pixel sizes preserve logical layout and touch coordinates')
+        second = client.request('stream.open', stream=2, mode='fusion', package='com.android.settings', configEvents=True)
+        client.frames(2)
+        assert second['display'] != initial['display']
+        client.request('stream.resize', stream=1, width=1200, height=900, density=240); client.frames(1)
+        client.request('stream.close', stream=2)
+        passed('resize with a second independent encoder')
+        if args.screen_power:
+            assert info['capabilities']['screenPower'], info
+            client.request('device.screenPower', screenOff=True)
+            wait(lambda: panel_is(False)); client.tap(1)
+            before = client.pictures[1]; client.frames(1, before+5)
+            client.request('device.screenPower', screenOff=False)
+            wait(lambda: panel_is(True))
+            passed('fusion remains interactive and produces video while physical panel is off')
+        resize_id = client.send('stream.resize', stream=1, width=630, height=1080, density=240)
+        close_id = client.send('stream.close', stream=1)
+        client.response(resize_id); client.response(close_id)
+        passed('close queued during resize releases the stream')
     client.request('apps.launch', package='io.macroid.fixture')
     mirror = client.request('stream.open', stream=3, mode='mirror', configEvents=True)
     client.frames(3); wait(lambda: state().get('display') == 0)
     client.reject('stream.resize', stream=3, width=1200, height=900, density=240)
+    if args.rotation:
+        run('shell', 'wm', 'user-rotation', 'lock', '0')
+        portrait = client.configuration(3, lambda c: c.get('rotation') == 0 and c.get('height', 0) > c.get('width', 0))
+        client.tap(3)
+        client.request('stream.rotate', stream=3)
+        landscape = client.configuration(3, lambda c: c.get('rotation') == 1 and c.get('generation', 0) > portrait['generation'])
+        assert landscape['width'] > landscape['height'] and landscape['rotationLocked']
+        client.tap(3)
+        report['mirrorRotations'] = [portrait, landscape]
+        client.request('stream.rotate', stream=3)
+        client.configuration(3, lambda c: c.get('rotation') == 0 and c.get('generation', 0) > landscape['generation'])
+        client.tap(3)
+        passed('toolbar rotation swaps encoder dimensions; input remains aligned')
+        for rotation in [2, 3, 0]:
+            previous = client.config[3]['generation']
+            run('shell', 'wm', 'user-rotation', 'lock', str(rotation))
+            updated = client.configuration(3, lambda c: c.get('rotation') == rotation and c.get('generation', 0) > previous)
+            assert (updated['width'] > updated['height']) == bool(rotation % 2), updated
+            client.tap(3)
+            report['mirrorRotations'].append(updated)
+        passed('phone display changes follow through 180°, reverse landscape and portrait with valid keyframes')
+        client.request('stream.rotate', stream=3, automatic=True)
+        assert run('shell', 'wm', 'user-rotation') == 'free'
+        # Emulate the phone accelerometer rather than asking Macroid to rotate.
+        if args.serial.startswith('emulator-'):
+            run('emu', 'sensor', 'set', 'acceleration', '9.8:0:0')
+            client.configuration(3, lambda c: c.get('rotation', 0) % 2 == 1)
+            passed('automatic sensor rotation reconfigures the mirror without a Mac rotation request')
+            run('emu', 'sensor', 'set', 'acceleration', '0:9.8:0')
+        passed('automatic rotation can be enabled from the stream control')
     if args.screen_power:
         client.request('device.screenPower', screenOff=True)
         wait(lambda: panel_is(False)); client.tap(3)
@@ -212,6 +265,9 @@ except Exception as e:
     report['passed'] = False; report['error'] = repr(e)
     raise
 finally:
+    if args.rotation and client:
+        for (stream, generation), data in client.video.items():
+            (args.output / f'stream-{stream}-generation-{generation}.h264').write_bytes(data)
     if client:
         try: client.socket.close()
         except Exception: pass
@@ -220,5 +276,7 @@ finally:
         except subprocess.TimeoutExpired: process.terminate()
         log.close()
         run('forward', '--remove', 'tcp:' + port)
+    if original_rotation:
+        run('shell', 'wm', 'user-rotation', *original_rotation.split())
     report['finalPanelModes'] = panel_modes() if args.screen_power else []
     (args.output / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2))

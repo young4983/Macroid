@@ -1,6 +1,22 @@
 # 验证记录
 
-最新测试日期：2026-11-06。以下先列 0.3 的结果，再保留 0.2 / 0.1 的历史验证范围。
+最新测试日期：2026-11-09。以下先列当前增量结果，再保留 0.3 / 0.2 / 0.1 的历史验证范围。
+
+## 2026-11-09 融合清晰度与投屏旋转
+
+- Swift 6 项测试通过，包含 Retina / 兼容模式在不同像素和 density 下保持同一 dp 布局，以及非法尺寸处理。
+- Android 12 / API 31 与 Android 14 / API 34 模拟器均验证手动横竖屏往返、180°、反向横屏、返回竖屏、模拟加速度传感器自动旋转。每次检查配置事件先于 SPS/PPS 和关键帧，旋转后触控仍命中测试按钮。最终方向专项报告为 `artifacts/testing/retina-rotation/android31-final-rotation/report.json` 和 `android34-final-rotation/report.json`。
+- 融合清晰度的服务端检查确认 840×800 / 320dpi 与 630×600 / 240dpi 均对应 420×400dp，应用任务、显示 ID、布局与触控保持正确。此前窄/宽切换、编码降级、过期输入、双编码器、调整时关闭窗口检查亦通过；方向测试另分离为 `--rotation-only`，方便针对镜像捕获回归。
+- Mac 客户端真实连接并解码 Android 12 与 Android 14：切换清晰度后实际视频元数据符合预期，旋转同时改变视频与窗口比例，自动旋转入口可用。正常退出恢复输入法并删除未完成上传。报告为 `artifacts/testing/retina-rotation/mac31-final/mac-report.json`、`mac34-final/mac-report.json`；最终 Android 14 截图还等待应用完成密度切换后的布局，以免把过渡帧当成最终效果。
+- Android 14 重复更换镜像 Surface 曾导致返回竖屏无画面，现改为重建不含应用任务的捕获显示。另增加 IRotationWatcher 与 WindowManager 方向读取，覆盖宽高不变时 DisplayListener 缺失的 180°通知。融合应用的 VirtualDisplay 仍保持同一显示和任务。
+- 本次未对已连接的真机执行旋转、输入法或安装测试；实际清晰度还受手机编码器能力影响。
+
+## 2026-11-09 构建与安装包验证
+
+- 完整 Android APK 构建与 `:app:lintDebug` 通过，Swift 6 项测试通过；旋转监听的非 SDK 字段仅用于 uid 2000 的 shell agent，已在该方法注明并限定 lint 豁免。
+- macOS Release 构建通过，应用和内置 ADB 均包含 x86_64 / arm64；APK 签名验证通过，应用内置 APK 与独立产物逐字节一致。
+- Universal ZIP 解压和 DMG 只读挂载后均通过 `codesign --verify --deep --strict`，应用全部文件与原始构建一致；DMG 通过 `hdiutil verify`，包含 `Macroid.app` 和指向 `/Applications` 的快捷入口，校验后已卸载。
+- APK、ZIP、DMG 的 `SHA256SUMS` 校验通过。源码归档检查确认包含最新源码和文档，不包含构建输出及本地测试记录。
 
 ## 菜单栏入口增量验证
 

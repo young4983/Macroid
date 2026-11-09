@@ -9,12 +9,12 @@ import SwiftUI
     private var changingSize = false
     private var configured = false
     private var normalScale: CGFloat?
-    static let fusionToolbarHeight: CGFloat = 40
     private var isFusion: Bool { session.mode == "fusion" }
     private var pinKey: String { "windowPinned-" + (session.package ?? "phone") }
     var requestedGeometry: StreamGeometry {
-        let size = window?.contentView?.bounds.size ?? NSSize(width: 420, height: 760)
-        return StreamGeometry(contentWidth: size.width, contentHeight: size.height - Self.fusionToolbarHeight)
+        let size = window?.contentView?.bounds.size ?? NSSize(width: 420, height: 720)
+        let scale = session.quality.pixelScale(for: Double(window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2))
+        return StreamGeometry(contentWidth: size.width, contentHeight: size.height, pixelScale: scale)
     }
     private var scaleKey: String { "deviceScale-" + (session.package ?? "phone") }
     init(session: MirrorSession, model: AppModel) {
@@ -23,8 +23,10 @@ import SwiftUI
         let fusion = session.mode == "fusion"
         let window: NSWindow
         if fusion {
-            window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 760),
+            window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 720),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            WindowChrome.configure(window, showsTitle: true)
+            window.setContentSize(NSSize(width: 420, height: 720))
         } else {
             window = DeviceWindow(contentRect: NSRect(origin: .zero, size: layout.size(scale: 0.9)),
                                   styleMask: [.borderless, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
@@ -41,7 +43,18 @@ import SwiftUI
             minimize: { [weak window] in window?.miniaturize(nil) },
             fit: { [weak self] in self?.toggleFit() },
             layout: { [weak self] in self?.layout ?? DeviceWindowLayout(width: 720, height: 1280) }))
-        if fusion { window.contentView = hosted }
+        if fusion {
+            window.contentView = hosted
+            let accessory = NSTitlebarAccessoryViewController()
+            accessory.layoutAttribute = .right
+            accessory.fullScreenMinHeight = WindowChrome.toolbarHeight
+            let controls = NSHostingView(rootView: MirrorWindowControls(session: session, model: model,
+                close: { [weak window] in window?.close() },
+                fit: { [weak self] in self?.toggleFit() }).frame(width: 98, height: WindowChrome.toolbarHeight))
+            controls.frame = NSRect(x: 0, y: 0, width: 98, height: WindowChrome.toolbarHeight)
+            accessory.view = controls
+            window.addTitlebarAccessoryViewController(accessory)
+        }
         else {
             window.contentView = DeviceContentView(hosted: hosted, isMirror: true,
                 layout: { [weak self] in self?.layout ?? DeviceWindowLayout(width: 720, height: 1280) },
@@ -81,7 +94,7 @@ import SwiftUI
     private func limited(_ scale: CGFloat) -> CGFloat { min(maximumScale(), max(min(0.65, maximumScale()), scale)) }
     private func updateLimits() {
         guard let window else { return }
-        if isFusion { window.contentMinSize = NSSize(width: 320, height: 240 + Self.fusionToolbarHeight); return }
+        if isFusion { window.contentMinSize = NSSize(width: 320, height: 240); return }
         window.minSize = layout.size(scale: min(0.65, maximumScale()))
         window.maxSize = layout.size(scale: maximumScale())
     }
@@ -117,7 +130,7 @@ import SwiftUI
         if isFusion {
             if session.dynamicResize { return frameSize }
             let title = sender.frame.height - (sender.contentView?.frame.height ?? 0)
-            return NSSize(width: frameSize.width, height: frameSize.width * CGFloat(session.height) / CGFloat(session.width) + title + Self.fusionToolbarHeight)
+            return NSSize(width: frameSize.width, height: frameSize.width * CGFloat(session.height) / CGFloat(session.width) + title)
         }
         let dx = (frameSize.width - sender.frame.width) / layout.body.width
         let dy = (frameSize.height - sender.frame.height) / layout.body.height
@@ -132,7 +145,11 @@ import SwiftUI
     func windowDidEndLiveResize(_ notification: Notification) {
         if isFusion, configured, session.dynamicResize { model?.resize(session, to: requestedGeometry) }
     }
-    func windowDidChangeScreen(_ notification: Notification) { updateLimits() }
+    func windowDidChangeScreen(_ notification: Notification) { updateLimits(); updateBackingGeometry() }
+    func windowDidChangeBackingProperties(_ notification: Notification) { updateBackingGeometry() }
+    private func updateBackingGeometry() {
+        if configured, isFusion, session.dynamicResize { model?.resize(session, to: requestedGeometry) }
+    }
 }
 
 struct MirrorRootView: View {
@@ -140,20 +157,16 @@ struct MirrorRootView: View {
     @ObservedObject var model: AppModel
     let close: () -> Void, minimize: () -> Void, fit: () -> Void
     let layout: () -> DeviceWindowLayout
-    @State private var showKeyboardHelp = false
     var body: some View {
         Group {
             if session.mode == "fusion" {
-                VStack(spacing: 0) {
-                    toolbar.frame(height: MirrorWindowController.fusionToolbarHeight).overlay(alignment: .bottom) { Divider() }
-                    ZStack(alignment: .top) {
-                        Color.black
-                        VideoSurface(session: session, model: model, cornerRadius: 0)
-                        MirrorLoadingView(session: session, renderer: session.renderer, model: model)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        if let notice = session.notice {
-                            Text(notice).font(.caption).padding(8).background(.regularMaterial).padding(6)
-                        }
+                ZStack(alignment: .top) {
+                    Color.black
+                    VideoSurface(session: session, model: model, cornerRadius: 0)
+                    MirrorLoadingView(session: session, renderer: session.renderer, model: model)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if let notice = session.notice {
+                        Text(notice).font(.caption).padding(8).background(.regularMaterial).padding(6)
                     }
                 }
             } else {
@@ -169,52 +182,22 @@ struct MirrorRootView: View {
                 }
             }
         }
-        .alert("启用 Macroid 键盘", isPresented: $showKeyboardHelp) {
-            Button("启用") { Task { await model.setIME(true) } }
-            Button("取消", role: .cancel) { }
-        } message: {
-            Text("连接期间将手机输入法切换为 Macroid，以接收 Mac 的中文和其他 Unicode 文字。断开连接时会恢复原输入法。Android 12/13 的输入焦点可能与手机共享。")
-        }
     }
     private var toolbar: some View {
-        HStack(spacing: 5) {
-            if session.mode == "mirror" { DeviceTrafficLights(close: close, minimize: minimize, fit: fit).padding(.trailing, 5) }
-            if session.mode == "mirror" { Text(session.name).font(.system(size: 11, weight: .medium)).lineLimit(1).truncationMode(.tail).help(session.name) }
-            WindowDragRegion().frame(minWidth: 36, maxWidth: .infinity, minHeight: 30).accessibilityHidden(true)
-            control("chevron.left", "返回 · Esc") { model.key(session, code: 4) }
-            if session.mode == "mirror" {
-                control("house", "主页") { model.key(session, code: 3) }
-                control("square.stack", "最近任务") { model.key(session, code: 187) }
-            }
-            control(model.imeEnabled ? "keyboard.fill" : "keyboard", "Macroid 键盘") {
-                if model.imeEnabled { Task { await model.setIME(false) } } else { showKeyboardHelp = true }
-            }
-            Menu {
-                Toggle("窗口置顶", isOn: Binding(get: { session.pinned }, set: { model.setPinned(session, $0) }))
-                Toggle("关屏使用", isOn: Binding(get: { model.screenOff }, set: { value in Task { await model.setScreenOff(value) } }))
-                    .disabled(!model.screenPowerSupported || model.screenPowerBusy || !model.sessions.values.contains(where: { $0.ready }))
-                if !model.screenPowerSupported { Text(model.screenPowerReason) }
-                Divider()
-                Button("适合屏幕", action: fit)
-                Divider()
-                Button("复制 Mac 剪贴板到 Android") { Task { await model.clipboard(toAndroid: true) } }
-                Button("复制 Android 剪贴板到 Mac") { Task { await model.clipboard(toAndroid: false) } }
-                Button("重新连接画面") { model.retryStream(session) }
-                Divider()
-                Text(session.encoding.isEmpty ? "正在连接…" : session.encoding)
-                Divider()
-                Button("关闭窗口", action: close)
-            } label: { Image(systemName: "ellipsis").font(.system(size: 14, weight: .medium)).frame(width: 22, height: 26) }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("更多操作").accessibilityLabel("更多操作")
-        }.padding(.horizontal, 11)
-            .background(Color(nsColor: .windowBackgroundColor).opacity(0.98), in: RoundedRectangle(cornerRadius: session.mode == "fusion" ? 0 : 9, style: .continuous))
-            .overlay {
-                if session.mode == "mirror" { RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(.primary.opacity(0.14), lineWidth: 0.6).allowsHitTesting(false) }
-            }
+        ViewThatFits(in: .horizontal) {
+            toolbarContents(compact: false)
+            toolbarContents(compact: true)
+        }.padding(.horizontal, WindowChrome.horizontalPadding)
+            .background(Color(nsColor: .windowBackgroundColor).opacity(0.98), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay { RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(.primary.opacity(0.14), lineWidth: 0.6).allowsHitTesting(false) }
     }
-    private func control(_ symbol: String, _ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { Image(systemName: symbol).font(.system(size: 12, weight: .medium)).frame(width: 22, height: 26).contentShape(Rectangle()) }
-            .buttonStyle(.plain).help(title).accessibilityLabel(title).disabled(!session.acceptsInput)
+    private func toolbarContents(compact: Bool) -> some View {
+        HStack(spacing: 5) {
+            DeviceTrafficLights(close: close, minimize: minimize, fit: fit).padding(.trailing, 5)
+            Text(session.name).font(.system(size: 11, weight: .medium)).lineLimit(1).truncationMode(.tail).help(session.name)
+            WindowDragRegion().frame(minWidth: 36, maxWidth: .infinity, minHeight: 30).accessibilityHidden(true)
+            MirrorWindowControls(session: session, model: model, close: close, fit: fit, compact: compact)
+        }
     }
     private func device(_ layout: DeviceWindowLayout, scale: CGFloat) -> some View {
         let radius = (DeviceWindowLayout.screenRadius + DeviceWindowLayout.bezel) * scale
@@ -232,6 +215,12 @@ struct MirrorRootView: View {
             .frame(width: layout.screen.width * scale, height: layout.screen.height * scale)
             .clipShape(RoundedRectangle(cornerRadius: screenRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: screenRadius, style: .continuous).strokeBorder(.white.opacity(0.07), lineWidth: 0.5).allowsHitTesting(false))
+            .overlay(alignment: .top) {
+                if let notice = session.notice {
+                    Text(notice).font(.caption).foregroundStyle(.white).padding(8)
+                        .background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 8)).padding(8).allowsHitTesting(false)
+                }
+            }
         }
         .frame(width: layout.body.width * scale, height: layout.body.height * scale)
         .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(.white.opacity(0.25), lineWidth: 0.6).allowsHitTesting(false))
@@ -241,6 +230,75 @@ struct MirrorRootView: View {
                 .foregroundStyle(Color(white: 0.27)).frame(width: 2 * scale).offset(x: -1.5 * scale, y: -layout.body.height * scale * 0.20).allowsHitTesting(false)
         }
 
+    }
+}
+
+/// Shared controls live in the native titlebar for fusion and the device toolbar for mirroring.
+private struct MirrorWindowControls: View {
+    @ObservedObject var session: MirrorSession
+    @ObservedObject var model: AppModel
+    let close: () -> Void, fit: () -> Void
+    var compact = false
+    @State private var showKeyboardHelp = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            control("chevron.left", "返回 · Esc") { model.key(session, code: 4) }
+            if session.mode == "mirror", !compact {
+                control("house", "主页") { model.key(session, code: 3) }
+                control("square.stack", "最近任务") { model.key(session, code: 187) }
+                Button { Task { await model.rotate(session) } } label: {
+                    Image(systemName: "rotate.right").font(.system(size: 12, weight: .medium)).frame(width: 22, height: 26).contentShape(Rectangle())
+                }.buttonStyle(.plain).help("旋转屏幕 90°").accessibilityLabel("旋转屏幕")
+                    .disabled(!session.acceptsInput || !model.rotationSupported)
+            }
+            control(model.imeEnabled ? "keyboard.fill" : "keyboard", "Macroid 键盘") {
+                if model.imeEnabled { Task { await model.setIME(false) } } else { showKeyboardHelp = true }
+            }
+            Menu {
+                if session.mode == "fusion", session.dynamicResize {
+                    Menu("画面清晰度") {
+                        Picker("画面清晰度", selection: Binding(get: { session.quality }, set: { model.setQuality(session, $0) })) {
+                            ForEach(FusionQuality.allCases, id: \.self) { Text($0.title).tag($0) }
+                        }.pickerStyle(.inline)
+                        Text("兼容模式降低画面分辨率，保留界面大小")
+                    }
+                    Divider()
+                }
+                if session.mode == "mirror" {
+                    Button("旋转屏幕 90°") { Task { await model.rotate(session) } }.disabled(!session.acceptsInput || !model.rotationSupported)
+                    Button("开启手机自动旋转") { Task { await model.rotate(session, automatic: true) } }
+                        .disabled(!session.acceptsInput || !model.rotationSupported)
+                    Divider()
+                }
+                Toggle("窗口置顶", isOn: Binding(get: { session.pinned }, set: { model.setPinned(session, $0) }))
+                Toggle("关屏使用", isOn: Binding(get: { model.screenOff }, set: { value in Task { await model.setScreenOff(value) } }))
+                    .disabled(!model.screenPowerSupported || model.screenPowerBusy || !model.sessions.values.contains(where: { $0.ready }))
+                if !model.screenPowerSupported { Text(model.screenPowerReason) }
+                Divider()
+                Button("适合屏幕", action: fit)
+                Divider()
+                Button("复制 Mac 剪贴板到 Android") { Task { await model.clipboard(toAndroid: true) } }
+                Button("复制 Android 剪贴板到 Mac") { Task { await model.clipboard(toAndroid: false) } }
+                Button("重新连接画面") { model.retryStream(session) }
+                Divider()
+                Text(session.encoding.isEmpty ? "正在连接…" : session.encoding)
+                Divider()
+                Button("关闭窗口", action: close)
+            } label: { Image(systemName: "ellipsis").font(.system(size: 14, weight: .medium)).frame(width: 22, height: 26) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("更多操作").accessibilityLabel("更多操作")
+        }
+        .alert("启用 Macroid 键盘", isPresented: $showKeyboardHelp) {
+            Button("启用") { Task { await model.setIME(true) } }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("连接期间将手机输入法切换为 Macroid，以接收 Mac 的中文和其他 Unicode 文字。断开连接时会恢复原输入法。Android 12/13 的输入焦点可能与手机共享。")
+        }
+    }
+
+    private func control(_ symbol: String, _ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: symbol).font(.system(size: 12, weight: .medium)).frame(width: 22, height: 26).contentShape(Rectangle()) }
+            .buttonStyle(.plain).help(title).accessibilityLabel(title).disabled(!session.acceptsInput)
     }
 }
 
